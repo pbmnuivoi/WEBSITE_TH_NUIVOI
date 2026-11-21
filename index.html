@@ -3,41 +3,92 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#2457a7">
+  <meta name="theme-color" content="#1e4a8c">
+  <meta name="description" content="Cổng thông tin trường học – tin tức, tiện ích và không gian làm việc số">
   <title>Cổng thông tin trường học</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div id="loginView" class="login-wrap">
-    <form id="loginForm" class="login-card">
-      <div class="brand-mark">✦</div>
-      <p class="eyebrow">HỆ THỐNG NỘI BỘ</p>
-      <h1>Cổng thông tin trường học</h1>
-      <p class="muted">Đăng nhập bằng tài khoản được nhà trường cấp.</p>
-      <label>Tên đăng nhập<input id="username" autocomplete="username" required></label>
-      <label>Mật khẩu<input id="password" type="password" autocomplete="current-password" required></label>
-      <button class="btn primary full" type="submit">Đăng nhập</button>
-      <p id="loginError" class="error" role="alert"></p>
-    </form>
+  <!-- ============ PUBLIC SHELL ============ -->
+  <div id="publicView" class="site">
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="logo" href="#home" id="brandLink">
+          <span class="logo-mark" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 3L2 9l10 6 10-6-10-6z" fill="currentColor" opacity=".9"/><path d="M2 15l10 6 10-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="logo-text">
+            <b id="headerSchoolName">Cổng thông tin trường học</b>
+            <small>Không gian thông tin &amp; tiện ích</small>
+          </span>
+        </a>
+        <nav class="header-nav" id="headerNav" aria-label="Menu chính"></nav>
+        <div class="header-actions">
+          <button type="button" class="btn ghost sm" id="btnOpenLogin">Đăng nhập</button>
+          <div class="user-chip hidden" id="userChip">
+            <span class="avatar sm" id="chipAvatar">A</span>
+            <span id="chipName">Admin</span>
+            <button type="button" class="btn ghost sm" id="btnLogout">Thoát</button>
+          </div>
+          <button type="button" class="icon-btn mobile-only" id="menuToggle" aria-label="Mở menu">☰</button>
+        </div>
+      </div>
+    </header>
+
+    <aside class="mobile-drawer" id="mobileDrawer" hidden>
+      <nav id="mobileNav"></nav>
+    </aside>
+
+    <main id="pageContent" class="site-main container"></main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div>
+          <b id="footerSchool">Cổng thông tin trường học</b>
+          <p id="footerAddress" class="muted">Địa chỉ đơn vị</p>
+        </div>
+        <div>
+          <b>Liên hệ</b>
+          <p class="muted" id="footerContact"></p>
+        </div>
+        <div>
+          <b>Hệ thống</b>
+          <p class="muted">Phiên bản 1.1 · Nội bộ nhà trường</p>
+        </div>
+      </div>
+    </footer>
   </div>
 
-  <div id="appView" class="app hidden">
-    <aside class="sidebar" id="sidebar">
-      <div class="school-brand"><div class="brand-mark small">✦</div><div><b id="sideSchoolName">Cổng thông tin</b><small>Không gian làm việc số</small></div></div>
-      <nav id="menuList" class="nav-list"></nav>
-      <div class="side-bottom"><span class="status-dot"></span> Hệ thống nội bộ</div>
-    </aside>
-    <main class="main">
-      <header class="topbar">
-        <button id="menuToggle" class="icon-btn" aria-label="Mở menu">☰</button>
-        <div class="breadcrumb" id="breadcrumb">Trang chủ</div>
-        <div class="user-area"><div class="avatar" id="avatar">U</div><div class="user-label"><b id="userName"></b><small id="userRole"></small></div><button id="logoutBtn" class="btn ghost">Đăng xuất</button></div>
-      </header>
-      <section id="pageContent" class="content"></section>
-      <footer id="footer" class="footer"></footer>
-    </main>
+  <!-- ============ LOGIN MODAL ============ -->
+  <div id="loginModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <div class="modal-backdrop" id="loginBackdrop"></div>
+    <div class="modal-card login-card">
+      <button type="button" class="modal-close" id="loginClose" aria-label="Đóng">×</button>
+      <div class="brand-mark">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 3L2 9l10 6 10-6-10-6z" fill="currentColor"/><path d="M2 15l10 6 10-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </div>
+      <p class="eyebrow">Dành cho cán bộ – giáo viên</p>
+      <h2 id="loginTitle">Đăng nhập hệ thống</h2>
+      <p class="muted">Sử dụng tài khoản được nhà trường cấp.</p>
+      <form id="loginForm" autocomplete="on">
+        <label class="field">Tên đăng nhập
+          <input id="username" name="username" autocomplete="username" required placeholder="admin">
+        </label>
+        <label class="field">Mật khẩu
+          <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="••••••••">
+        </label>
+        <button class="btn primary full" type="submit" id="loginSubmit">Đăng nhập</button>
+        <p id="loginError" class="error" role="alert"></p>
+      </form>
+    </div>
   </div>
+
   <div id="toast" class="toast" role="status"></div>
+  <div id="loading" class="loading-bar" hidden></div>
+
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
