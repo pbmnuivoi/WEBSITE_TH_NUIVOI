@@ -164,6 +164,15 @@
     });
   }
 
+
+  function fixDriveUrl(u) {
+    u = String(u || '');
+    if (!u) return u;
+    var m = u.match(/[?&]id=([a-zA-Z0-9_-]+)/) || u.match(/\/d\/([a-zA-Z0-9_-]+)/) || u.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1600';
+    return u;
+  }
+
   function youtubeId(url) {
     if (!url) return '';
     var m = String(url).match(/(?:youtu\.be\/|v=|\/embed\/|shorts\/)([A-Za-z0-9_-]{6,})/);
@@ -372,7 +381,7 @@
       var body = html.replace(/<p class="media-img">[\s\S]*?<\/p>/gi, '').replace(/<img[^>]*>/gi, '');
       var gal = imgs.length
         ? '<div class="article-gallery">' + imgs.map(function (u) {
-            return '<a class="g-item" href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" alt="" loading="lazy"></a>';
+            var fu = fixDriveUrl(u); return '<a class="g-item" href="' + esc(fu) + '" target="_blank" rel="noopener"><img src="' + esc(fu) + '" alt="" loading="lazy" onerror="this.style.opacity=.3"></a>';
           }).join('') + '</div>'
         : '';
       var dt = (p.publishedAt || p.createdAt || '').toString().slice(0, 10);
@@ -429,7 +438,7 @@
   }
 
   function sideBtn(id, ico, title) {
-    return '<button type="button" data-side="' + esc(id) + '"><span>' + ico + '</span> ' + esc(title) + '</button>';
+    return '<button type="button" data-side="' + esc(id) + '"><span class="nav-ico">' + ico + '</span><span>' + esc(title) + '</span></button>';
   }
 
   function navSide(id) {
@@ -512,9 +521,9 @@
           var dt = (p.publishedAt || p.createdAt || p.updatedAt || '').toString().slice(0, 10);
           return '<tr><td><b>' + esc(p.title) + '</b><div class="dim" style="font-size:11px">' +
             esc(p.category || '') + ' · ' + esc(p.status || '') + ' · ' + esc(dt || '—') + '</div></td>' +
-            '<td class="actions">' +
-            '<button type="button" class="btn-sm" data-edit="' + esc(p.postId) + '">Sửa</button> ' +
-            '<button type="button" class="btn-sm btn-danger" data-del="' + esc(p.postId) + '">Xóa</button></td></tr>';
+            '<td class="actions"><span class="btn-group">' +
+            '<button type="button" class="btn-sm" data-edit="' + esc(p.postId) + '">Sửa</button>' +
+            '<button type="button" class="btn-sm btn-danger" data-del="' + esc(p.postId) + '">Xóa</button></span></td></tr>';
         }).join('');
         setHtml('#workMain',
           '<div class="panel"><div class="toolbar"><h3 style="margin:0">Bài viết</h3>' +
@@ -603,7 +612,7 @@
       var box = el('imgList');
       if (!box) return;
       box.innerHTML = imgUrls.map(function (u, i) {
-        return '<div class="img-row"><img src="' + esc(u) + '" alt=""><input type="text" value="' + esc(u) + '" data-i="' + i + '">' +
+        return '<div class="img-row"><img src="' + esc(fixDriveUrl(u)) + '" alt=""><input type="text" value="' + esc(u) + '" data-i="' + i + '">' +
           '<button type="button" class="btn-sm btn-danger" data-rm="' + i + '">Xóa</button></div>';
       }).join('') || '<p class="dim">Chưa có ảnh trong bài.</p>';
       $$('#imgList [data-rm]').forEach(function (b) {
@@ -650,7 +659,7 @@
       });
       imgUrls = imgUrls.filter(Boolean);
       var mediaHtml = imgUrls.map(function (u) {
-        return '<p class="media-img"><img src="' + esc(u) + '" alt=""></p>';
+        return '<p class="media-img"><img src="' + esc(fixDriveUrl(u)) + '" alt=""></p>';
       }).join('');
       var body = buildContentHtml(fd.bodyText, '', fd.videoUrl);
       fd.contentHtml = mediaHtml + body;
