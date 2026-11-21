@@ -11,7 +11,8 @@
   function $(s, r) { return (r || document).querySelector(s); }
   function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
   function el(id) { return document.getElementById(id); }
-  function setHtml(sel, html) { var n = $(sel); if (n) n.innerHTML = html; }
+  function setHtml(sel, html) { var n = $(sel); if (n) { n.innerHTML = html; renderIcons(n); } }
+  function renderIcons(root) { if (window.lucide && typeof window.lucide.createIcons === 'function') window.lucide.createIcons({ root: root || document, attrs: { 'stroke-width': 1.8 } }); }
   function setText(sel, text) { var n = $(sel); if (n) n.textContent = text; }
   function show(sel) { var n = $(sel); if (n) n.classList.remove('hidden'); }
   function hide(sel) { var n = $(sel); if (n) n.classList.add('hidden'); }
@@ -107,13 +108,23 @@
     isAdmin: false, mode: 'public'
   };
 
-  var ICONS = {
-    house: '⌂', home: '⌂', newspaper: '📰', bell: '🔔', users: '👥', book: '📖',
-    folder: '📁', chart: '📊', settings: '⚙', link: '🔗', grid: '▦',
-    building: '🏫', school: '🏫', 'file-text': '📄', file: '📄'
-  };
+  // Lucide Icons: lưu tên icon dạng kebab-case trong Google Sheets.
+  function icon(n) {
+    var name = String(n || 'link').trim().toLowerCase();
+    var aliases = { house: 'home', school: 'school', book: 'book-open', chart: 'chart-column', file: 'file-text' };
+    name = aliases[name] || name;
+    return '<i data-lucide="' + esc(name) + '" class="menu-lucide" aria-hidden="true"></i>';
+  }
 
-  function icon(n) { return ICONS[n] || ICONS[String(n || '').toLowerCase()] || '•'; }
+  var MENU_ICON_CHOICES = [
+    'home','school','building-2','graduation-cap','book-open','book','library','notebook-text',
+    'newspaper','file-text','files','folder','folder-open','image','images','camera','video',
+    'bell','megaphone','calendar-days','calendar-check','clock','users','user-round','contact',
+    'clipboard-list','clipboard-check','list-checks','chart-column','chart-pie','bar-chart-3',
+    'monitor','laptop','computer','wifi','globe','link','external-link','settings','sliders-horizontal',
+    'shield-check','lock-keyhole','info','circle-help','map-pin','phone','mail','heart-handshake',
+    'trophy','medal','lightbulb','sparkles','database','cloud','download','upload','printer','search'
+  ];
   function cfgOn(key, defYes) {
     var v = state.config && state.config[key];
     if (v === undefined || v === null || v === '') return defYes !== false;
@@ -1103,11 +1114,36 @@
       '<input type="hidden" name="menuId" value="' + esc(m.menuId || '') + '">' +
       '<input type="hidden" name="location" value="HOME">' +
       field('Tiêu đề (= danh mục bài viết)', 'title', m.title) +
-      field('Icon', 'icon', m.icon || 'newspaper') +
+      '<div class="span2 icon-picker"><label for="menuIconSearch">Chọn biểu tượng</label>' +
+      '<input id="menuIconSearch" type="search" placeholder="Tìm icon: trường học, sách, thông báo..." autocomplete="off">' +
+      '<input type="hidden" name="icon" id="menuIconValue" value="' + esc(m.icon || 'newspaper') + '">' +
+      '<div class="icon-picker-preview" id="menuIconPreview">' + icon(m.icon || 'newspaper') + '<span>' + esc(m.icon || 'newspaper') + '</span></div>' +
+      '<div class="icon-picker-grid" id="menuIconGrid">' + MENU_ICON_CHOICES.map(function (name) { return '<button type="button" class="icon-choice" data-icon="' + name + '" title="' + name + '">' + icon(name) + '<small>' + name + '</small></button>'; }).join('') + '</div></div>' +
       field('URL ngoài (tùy chọn)', 'url', m.url || '') +
       field('Thứ tự', 'sortOrder', m.sortOrder || 10, 'number') +
       field('Trạng thái', 'status', m.status || 'ON', 'select-status') +
       '<label class="span2"><button class="btn btn-primary" type="submit">Lưu</button></label></form>';
+    renderIcons(box);
+    var iconSearch = el('menuIconSearch');
+    var iconGrid = el('menuIconGrid');
+    var iconValue = el('menuIconValue');
+    function filterIcons() {
+      var q = String(iconSearch.value || '').toLowerCase().trim();
+      $$('.icon-choice', iconGrid).forEach(function (b) {
+        b.classList.toggle('hidden', q && b.getAttribute('data-icon').indexOf(q) < 0);
+      });
+    }
+    iconSearch.addEventListener('input', filterIcons);
+    iconGrid.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-icon]'); if (!b) return;
+      iconValue.value = b.getAttribute('data-icon');
+      $$('.icon-choice', iconGrid).forEach(function (x) { x.classList.toggle('selected', x === b); });
+      el('menuIconPreview').innerHTML = icon(iconValue.value) + '<span>' + esc(iconValue.value) + '</span>';
+      renderIcons(el('menuIconPreview'));
+    });
+    var initialChoice = $('.icon-choice[data-icon="' + (m.icon || 'newspaper') + '"]', iconGrid);
+    if (initialChoice) initialChoice.classList.add('selected');
+    filterIcons();
     el('menuForm').onsubmit = function (e) {
       e.preventDefault();
       var d = Object.fromEntries(new FormData(e.target));
