@@ -456,7 +456,7 @@
     $('#workMain').innerHTML =
       '<div class="panel"><p class="dim">Dùng mục <b>Đăng bài viết</b> để tạo bài mới. Đặt trạng thái <b>PUBLISHED</b> để hiện công khai.</p>' +
       '<button type="button" class="btn btn-primary" id="goPost">Soạn bài mới</button></div>';
-    $('#goPost').onclick = () => navSide('POST_NEW');
+    const gp = document.getElementById('goPost'); if (gp) gp.onclick = () => navSide('POST_NEW');
   }
 
   /* ---------- Auth ---------- */
@@ -531,17 +531,34 @@
     showPublic();
   }
 
-  // Events
-  $('#loginForm').addEventListener('submit', onLogin);
-  $('#btnLogin').onclick = openLogin;
-  $('#btnCloseLogin').onclick = closeLogin;
-  $('#overlayBg').onclick = closeLogin;
-  $('#btnLogout').onclick = onLogout;
-  $('#btnBackPublic').onclick = () => showPublic();
-  $('#pubHome').onclick = e => { e.preventDefault(); renderPublicHome(); };
-  $('#pubBurger').onclick = () => $('#homeMnav').classList.toggle('hidden');
-  $('#sideToggle').onclick = () => $('#side').classList.toggle('open');
+  // Events — gắn an toàn (bỏ qua nếu thiếu phần tử / HTML cũ)
+  function on(id, ev, fn) {
+    const el = typeof id === 'string' ? document.getElementById(id) : id;
+    if (!el) return;
+    el.addEventListener(ev, fn);
+  }
+  const loginForm = document.getElementById('loginForm');
+  if (loginForm) loginForm.addEventListener('submit', onLogin);
+  on('btnLogin', 'click', openLogin);
+  on('btnCloseLogin', 'click', closeLogin);
+  on('overlayBg', 'click', closeLogin);
+  on('btnLogout', 'click', onLogout);
+  on('btnBackPublic', 'click', () => showPublic());
+  on('pubHome', 'click', e => { e.preventDefault(); renderPublicHome(); });
+  on('pubBurger', 'click', () => {
+    const m = document.getElementById('homeMnav');
+    if (m) m.classList.toggle('hidden');
+  });
+  on('sideToggle', 'click', () => {
+    const s = document.getElementById('side');
+    if (s) s.classList.toggle('open');
+  });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLogin(); });
 
-  boot();
+  // Đảm bảo DOM sẵn sàng
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
 })();
