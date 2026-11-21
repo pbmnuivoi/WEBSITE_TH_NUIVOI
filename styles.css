@@ -39,8 +39,13 @@ a{color:var(--primary)}
 .mobile-only{display:none}
 
 /* Mobile drawer */
-.mobile-drawer{position:fixed;inset:68px 0 auto 0;background:#fff;border-bottom:1px solid var(--line);padding:12px 16px;z-index:35;display:flex;flex-direction:column;gap:4px;box-shadow:var(--shadow)}
+.mobile-drawer{display:none!important}
+.mobile-drawer.is-open{display:flex!important;position:fixed;inset:68px 0 auto 0;background:#fff;border-bottom:1px solid var(--line);padding:12px 16px;z-index:35;flex-direction:column;gap:4px;box-shadow:var(--shadow)}
 .mobile-drawer .nav-link{justify-content:flex-start;width:100%}
+/* Không bao giờ hiện drawer kiểu sidebar trên desktop */
+@media(min-width:901px){
+  .mobile-drawer,.mobile-drawer.is-open{display:none!important}
+}
 
 /* Main */
 .site-main{padding:28px 0 48px;min-height:calc(100vh - 200px)}
