@@ -539,7 +539,11 @@
     val = val == null ? '' : val;
     type = type || 'text';
     if (type === 'textarea') {
-      return '<label class="span2">' + label + '<textarea name="' + name + '" rows="4">' + esc(val) + '</textarea></label>';
+      var rows = name === 'introHtml' ? 8 : 6;
+      return '<label class="span2 config-textarea-field">' + label +
+        '<textarea name="' + name + '" rows="' + rows + '" placeholder="' +
+        (name === 'welcomeText' ? 'Nhập mô tả ngắn về nhà trường...' : 'Nhập nội dung giới thiệu chi tiết...') +
+        '">' + esc(val) + '</textarea></label>';
     }
     if (type === 'select-status') {
       return '<label>' + label + '<select name="' + name + '">' +
@@ -1042,30 +1046,62 @@
       }).catch(function (err) { setText('#logoUpMsg', err.message); });
     };
     function needAdmin() {
-      if (!state.token || !state.isAdmin) { toast('Cần đăng nhập admin'); return false; }
+      if (!state.token || !state.isAdmin || !state.user) { toast('Cần đăng nhập admin'); return false; }
       return true;
+    }
+    function reauthenticateAdmin() {
+      if (!needAdmin()) return Promise.resolve(false);
+      var password = window.prompt('Để tiếp tục thao tác quản trị, vui lòng nhập lại mật khẩu tài khoản ' +
+        (state.user.username || 'admin') + ':');
+      if (password === null) return Promise.resolve(false);
+      if (!password) { toast('Bạn chưa nhập mật khẩu.'); return Promise.resolve(false); }
+      return api('login', { username: state.user.username, password: password }).then(function (login) {
+        if (!login.user || login.user.groupCode !== 'ADMIN') {
+          toast('Tài khoản không có quyền quản trị.');
+          return false;
+        }
+        state.token = login.token;
+        state.user = login.user;
+        state.isAdmin = true;
+        sessionStorage.setItem('school_token', login.token);
+        return true;
+      }).catch(function (err) {
+        toast('Xác thực lại thất bại: ' + err.message);
+        return false;
+      });
     }
     el('btnDelPosts').onclick = function () {
       if (!needAdmin()) return;
-      if (!confirm('XÓA TẤT CẢ bài đăng?')) return;
-      if (!confirm('Xác nhận lần 2?')) return;
-      api('deleteAllPosts', {}).then(function (r) {
-        toast('Đã xóa ' + (r.deleted || 0) + ' bài');
-        return api('bootstrap');
-      }).then(function (d) { apply(d, true); }).catch(function (e) { toast(e.message); });
+      if (!confirm('XÓA TẤT CẢ bài đăng? Thao tác này không thể hoàn tác.')) return;
+      if (!confirm('Bạn chắc chắn muốn xóa toàn bộ bài đăng?')) return;
+      reauthenticateAdmin().then(function (ok) {
+        if (!ok) return;
+        return api('deleteAllPosts', {}).then(function (r) {
+          toast('Đã xóa ' + (r.deleted || 0) + ' bài');
+          return api('bootstrap');
+        }).then(function (d) { if (d) apply(d, true); });
+      }).catch(function (e) { toast(e.message); });
     };
     el('btnDelConfig').onclick = function () {
       if (!needAdmin()) return;
-      if (!confirm('Reset cấu hình về mặc định?')) return;
-      api('resetConfig', {}).then(function () {
-        toast('Đã reset'); return api('bootstrap');
-      }).then(function (d) { apply(d, true); renderConfig(); }).catch(function (e) { toast(e.message); });
+      if (!confirm('Reset toàn bộ cấu hình cổng về mặc định?')) return;
+      reauthenticateAdmin().then(function (ok) {
+        if (!ok) return;
+        return api('resetConfig', {}).then(function () {
+          toast('Đã khôi phục cấu hình mặc định');
+          return api('bootstrap');
+        }).then(function (d) { if (d) { apply(d, true); renderConfig(); } });
+      }).catch(function (e) { toast(e.message); });
     };
     el('btnDelImages').onclick = function () {
       if (!needAdmin()) return;
-      if (!confirm('Xóa TẤT CẢ file trong folder Drive?')) return;
-      api('deleteAllDriveImages', {}).then(function (r) {
-        toast('Đã xóa ' + (r.deleted || 0) + ' file');
+      if (!confirm('Đưa TẤT CẢ file trong thư mục Drive ảnh vào thùng rác?')) return;
+      if (!confirm('Xác nhận xóa toàn bộ ảnh trong thư mục Drive?')) return;
+      reauthenticateAdmin().then(function (ok) {
+        if (!ok) return;
+        return api('deleteAllDriveImages', {}).then(function (r) {
+          toast('Đã đưa ' + (r.deleted || 0) + ' file vào thùng rác');
+        });
       }).catch(function (e) { toast(e.message); });
     };
   }
