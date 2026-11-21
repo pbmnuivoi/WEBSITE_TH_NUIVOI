@@ -461,41 +461,29 @@ a.card{text-decoration:none}
 @media(max-width:700px){.switch-grid{grid-template-columns:1fr}}
 
 
-/* Cấu hình cổng: vùng nhập mô tả/giới thiệu dễ đọc và dễ thao tác */
-.form-section > label.config-textarea-field,
-.form-section > label.span2.config-textarea-field{
-  display:grid;
-  grid-column:1 / -1;
-  width:100%;
-  gap:8px;
-  margin-top:14px;
-  color:#334155;
-  font-size:13px;
-  font-weight:700;
-}
-.form-section > label.config-textarea-field textarea{
-  display:block;
-  box-sizing:border-box;
-  width:100%;
-  min-height:150px;
-  padding:12px 14px;
-  border:1px solid #cbd5e1;
-  border-radius:10px;
-  background:#fff;
-  color:#0f172a;
-  font:500 14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;
-  resize:vertical;
-  white-space:pre-wrap;
-}
-.form-section > label.config-textarea-field textarea[name="introHtml"]{
-  min-height:220px;
-}
-.form-section > label.config-textarea-field textarea:focus{
-  outline:none;
-  border-color:var(--p);
-  box-shadow:0 0 0 3px rgba(30,74,140,.12);
-}
-@media(max-width:700px){
-  .form-section > label.config-textarea-field textarea{min-height:130px}
-  .form-section > label.config-textarea-field textarea[name="introHtml"]{min-height:190px}
-}
+/* Cấu hình: vùng nhập nội dung dài, rõ ràng và dễ thao tác */
+.config-text-fields{display:grid;grid-template-columns:1fr;gap:18px;margin:18px 0 8px}
+.config-text-field{display:grid;gap:8px;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;min-width:0}
+.config-text-field label{font-size:14px;font-weight:800;color:#1e293b}
+.config-field-help{margin:0;color:#64748b;font-size:12px;line-height:1.55}
+.config-text-field textarea{display:block;width:100%;min-height:130px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;background:#fff;padding:13px 14px;font:inherit;font-size:14px;line-height:1.65;color:#0f172a;resize:vertical;outline:none}
+.config-text-field textarea#cfgIntroHtml{min-height:210px}
+.config-text-field textarea:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.13)}
+.config-text-field textarea::placeholder{color:#94a3b8}
+
+/* Hộp đăng nhập lại riêng cho thao tác nguy hiểm */
+.fresh-auth-backdrop{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.62);backdrop-filter:blur(3px)}
+.fresh-auth-card{width:min(100%,440px);background:#fff;border-radius:16px;padding:22px;box-shadow:0 24px 70px rgba(0,0,0,.28);box-sizing:border-box}
+.fresh-auth-head{display:flex;gap:12px;align-items:center;margin-bottom:16px}
+.fresh-auth-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:#fff1f2;font-size:21px}
+.fresh-auth-head h3{margin:0 0 4px;font-size:17px;color:#0f172a}
+.fresh-auth-head p{margin:0;color:#64748b;font-size:12px}
+.fresh-auth-warning{padding:11px 12px;margin-bottom:16px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7;color:#991b1b;font-size:13px;line-height:1.55}
+.fresh-auth-card form{display:grid;gap:12px}
+.fresh-auth-card form label{display:grid;gap:6px;color:#334155;font-size:13px;font-weight:700}
+.fresh-auth-card input{width:100%;height:43px;box-sizing:border-box;padding:0 12px;border:1px solid #cbd5e1;border-radius:9px;font:inherit;font-size:14px;outline:none}
+.fresh-auth-card input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.fresh-auth-error{min-height:18px;color:#b91c1c;font-size:12px;line-height:1.45}
+.fresh-auth-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:2px}
+.fresh-auth-actions button{min-height:40px}
+@media(max-width:600px){.fresh-auth-card{padding:18px}.fresh-auth-actions{flex-direction:column-reverse}.fresh-auth-actions button{width:100%;justify-content:center}}
