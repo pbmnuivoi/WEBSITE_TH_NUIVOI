@@ -66,6 +66,9 @@
   document.addEventListener('click', function (event) {
     var button = event.target && event.target.closest ? event.target.closest('button') : null;
     if (!button || button.disabled) return;
+    // Điều hướng menu công khai chỉ đổi nội dung đã có ở client: không hiển thị
+    // spinner/disabled như một thao tác gửi dữ liệu lên máy chủ.
+    if (button.matches('[data-home]')) return;
     // Nút submit được quản lý duy nhất ở sự kiện submit của form.
     if (button.type === 'submit' || (button.form && (!button.type || button.type === 'submit'))) return;
     setActionContext(button);
