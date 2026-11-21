@@ -17,13 +17,16 @@
   function hide(sel) { var n = $(sel); if (n) n.classList.add('hidden'); }
   function on(id, ev, fn) { var n = el(id); if (n) n.addEventListener(ev, fn); }
 
-  // Khóa nút ngay khi người dùng bấm; giữ trạng thái loading trong toàn bộ chuỗi API.
+  // Khóa nút theo từng thao tác; tránh đếm trùng click + submit + fetch.
   var recentActionButton = null;
   function markButtonBusy(button) {
     if (!button || button.tagName !== 'BUTTON') return;
+    var hadPendingUnlock = !!button.__busyTimer;
     if (button.__busyTimer) { clearTimeout(button.__busyTimer); button.__busyTimer = null; }
     if (!button.__busyCount) {
-      button.__wasDisabled = button.disabled;
+      // Nếu đang nối tiếp API, giữ trạng thái disabled ban đầu thay vì ghi nhận
+      // trạng thái disabled tạm thời do chính loading tạo ra.
+      if (!hadPendingUnlock) button.__wasDisabled = button.disabled;
       button.classList.add('is-loading');
       button.setAttribute('aria-busy', 'true');
       button.disabled = true;
@@ -34,48 +37,66 @@
     if (!button || !button.__busyCount) return;
     button.__busyCount = Math.max(0, button.__busyCount - 1);
     if (button.__busyCount) return;
-    // Đợi ngắn để các API nối tiếp trong cùng thao tác tiếp tục dùng chung nút.
     button.__busyTimer = setTimeout(function () {
       if (button.__busyCount) return;
       button.classList.remove('is-loading');
       button.removeAttribute('aria-busy');
       button.disabled = !!button.__wasDisabled;
       button.__busyTimer = null;
-    }, 700);
+    }, 250);
+  }
+  function setActionContext(button) {
+    if (!button || button.tagName !== 'BUTTON') return;
+    recentActionButton = button;
+    button.__fetchStarted = false;
+    button.__busyReserved = true;
+    markButtonBusy(button);
+    (function clearContext() {
+      setTimeout(function () {
+        if (button.__fetchStarted && button.__busyCount > 0) return clearContext();
+        if (recentActionButton === button) recentActionButton = null;
+        if (!button.__fetchStarted && button.__busyCount > 0) {
+          button.__busyReserved = false;
+          releaseButtonBusy(button);
+        }
+      }, 1200);
+    })();
   }
   document.addEventListener('click', function (event) {
     var button = event.target && event.target.closest ? event.target.closest('button') : null;
     if (!button || button.disabled) return;
-    recentActionButton = button;
-    markButtonBusy(button);
-    // Trường hợp nút chỉ thực hiện thao tác cục bộ, tự mở khóa sau thời gian ngắn.
-    (function clearActionContext() {
-      setTimeout(function () {
-        if (button.__fetchStarted && button.__busyCount > 0) return clearActionContext();
-        if (recentActionButton === button) recentActionButton = null;
-        if (!button.__fetchStarted && button.__busyCount) releaseButtonBusy(button);
-      }, 1800);
-    })();
+    // Nút submit được quản lý duy nhất ở sự kiện submit của form.
+    if (button.type === 'submit' || (button.form && (!button.type || button.type === 'submit'))) return;
+    setActionContext(button);
   }, true);
   document.addEventListener('submit', function (event) {
     var form = event.target;
     var button = event.submitter || (form && form.querySelector('button[type="submit"],button:not([type])'));
     if (!button || button.disabled) return;
-    recentActionButton = button;
-    markButtonBusy(button);
-    (function clearSubmitContext() {
-      setTimeout(function () {
-        if (button.__fetchStarted && button.__busyCount > 0) return clearSubmitContext();
-        if (recentActionButton === button) recentActionButton = null;
-        if (!button.__fetchStarted && button.__busyCount) releaseButtonBusy(button);
-      }, 1800);
-    })();
+    setActionContext(button);
   }, true);
   function trackedFetch(input, init) {
     var button = recentActionButton;
-    if (button) button.__fetchStarted = true;
-    if (button && !button.__busyCount) markButtonBusy(button);
-    return window.fetch(input, init).finally(function () {
+    if (button) {
+      button.__fetchStarted = true;
+      // Lần fetch đầu dùng lượt khóa đã tạo bởi click/submit; fetch tiếp theo
+      // trong cùng chuỗi promise mới tăng bộ đếm riêng.
+      if (button.__busyReserved) button.__busyReserved = false;
+      else markButtonBusy(button);
+    }
+    var requestInit = Object.assign({}, init || {});
+    var controller = window.AbortController ? new AbortController() : null;
+    if (controller && !requestInit.signal) requestInit.signal = controller.signal;
+    var timeoutId = setTimeout(function () {
+      if (controller) controller.abort();
+    }, 60000);
+    return window.fetch(input, requestInit).catch(function (err) {
+      if (err && err.name === 'AbortError') {
+        throw new Error('Máy chủ phản hồi quá lâu (60 giây). Vui lòng kiểm tra Cloudflare Worker và Apps Script rồi thử lại.');
+      }
+      throw err;
+    }).finally(function () {
+      clearTimeout(timeoutId);
       if (button) releaseButtonBusy(button);
     });
   }
@@ -935,8 +956,14 @@
 
     el('postForm').onsubmit = function (e) {
       e.preventDefault();
-      var fd = Object.fromEntries(new FormData(e.target));
-      fd.pinned = !!(e.target.pinned && e.target.pinned.checked);
+      var form = e.currentTarget;
+      if (form.__saving) return;
+      form.__saving = true;
+      var saveBtn = e.submitter || form.querySelector('button[type="submit"]');
+      var oldSaveText = saveBtn ? saveBtn.textContent : '';
+      if (saveBtn) saveBtn.textContent = 'Đang lưu…';
+      var fd = Object.fromEntries(new FormData(form));
+      fd.pinned = !!(form.pinned && form.pinned.checked);
       $$('#imgList input[data-i]').forEach(function (inp) {
         imgUrls[Number(inp.getAttribute('data-i'))] = inp.value.trim();
       });
@@ -952,10 +979,16 @@
       if (!fd.postId) delete fd.postId;
       delete fd.bodyText; delete fd.videoUrl;
       api('savePost', fd).then(function () {
-        toast('Đã lưu');
-        return api('bootstrap');
-      }).then(function (d) { apply(d, true); renderPostsList(); })
-        .catch(function (err) { toast(err.message); });
+        toast('Đã lưu bài viết.');
+        // Không gọi bootstrap lần nữa: tải lại đúng danh sách bài viết đã lưu.
+        recentActionButton = null;
+        renderPostsList();
+      }).catch(function (err) {
+        toast('Không lưu được bài viết: ' + (err.message || 'Lỗi không xác định'));
+      }).finally(function () {
+        form.__saving = false;
+        if (saveBtn && saveBtn.isConnected) saveBtn.textContent = oldSaveText || 'Lưu bài viết';
+      });
     };
     el('btnCancelPost').onclick = function () { renderPostsList(); };
   }
@@ -1335,22 +1368,36 @@
     e.preventDefault();
     setText('#loginErr', '');
     var btn = el('loginBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    var oldText = btn ? btn.textContent : 'Đăng nhập';
+    if (btn) btn.textContent = 'Đang đăng nhập…';
+    var issuedToken = '';
     api('login', {
       username: ((el('username') && el('username').value) || '').trim(),
       password: (el('password') && el('password').value) || ''
     }).then(function (d) {
-      state.token = d.token;
-      sessionStorage.setItem('school_token', d.token);
+      issuedToken = d.token || '';
+      if (!issuedToken) throw new Error('Máy chủ không trả về phiên đăng nhập.');
+      state.token = issuedToken;
+      sessionStorage.setItem('school_token', issuedToken);
       state.user = d.user;
-      closeLogin();
+      // Chỉ đóng form sau khi dữ liệu quản trị tải thành công.
       return api('bootstrap');
     }).then(function (boot) {
-      apply(boot, true); showWork(); toast('Đăng nhập thành công');
+      apply(boot, true);
+      closeLogin();
+      showWork();
+      toast('Đăng nhập thành công');
     }).catch(function (err) {
-      setText('#loginErr', err.message);
-    }).then(function () {
-      if (btn) { btn.disabled = false; btn.textContent = 'Đăng nhập'; }
+      if (issuedToken) {
+        // Thu hồi phiên vừa cấp nếu bước bootstrap thất bại.
+        api('logout').catch(function () {});
+        sessionStorage.removeItem('school_token');
+        state.token = ''; state.user = null; state.isAdmin = false;
+      }
+      setText('#loginErr', err.message || 'Đăng nhập không thành công.');
+      if (el('password')) el('password').value = '';
+    }).finally(function () {
+      if (btn) btn.textContent = oldText || 'Đăng nhập';
     });
   }
 
