@@ -72,18 +72,37 @@
   function uploadFileInput(file) {
     return new Promise(function (resolve, reject) {
       if (!file) return reject(new Error('Chưa chọn file'));
-      if (file.size > 5 * 1024 * 1024) return reject(new Error('Ảnh tối đa 5MB'));
+      if (!/^image\//i.test(file.type || '')) return reject(new Error('Chỉ nhận file ảnh'));
+      if (file.size > 8 * 1024 * 1024) return reject(new Error('Ảnh tối đa 8MB (sẽ tự nén)'));
+
       var reader = new FileReader();
-      reader.onload = function () {
-        var dataUrl = String(reader.result || '');
-        var base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
-        api('uploadImage', {
-          fileName: file.name,
-          mimeType: file.type || 'image/jpeg',
-          base64: base64
-        }).then(resolve).catch(reject);
-      };
       reader.onerror = function () { reject(new Error('Không đọc được file')); };
+      reader.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var maxW = 1600;
+          var w = img.width, h = img.height;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          var canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          var base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+          // ~ base64 size check ~3.5MB payload
+          if (base64.length > 3.5 * 1024 * 1024) {
+            dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+            base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+          }
+          api('uploadImage', {
+            fileName: (file.name || 'img').replace(/\.\w+$/, '') + '.jpg',
+            mimeType: 'image/jpeg',
+            base64: base64
+          }).then(resolve).catch(reject);
+        };
+        img.onerror = function () { reject(new Error('File ảnh không hợp lệ')); };
+        img.src = String(reader.result || '');
+      };
       reader.readAsDataURL(file);
     });
   }
@@ -166,11 +185,21 @@
 
 
   function fixDriveUrl(u) {
-    u = String(u || '');
+    u = String(u || '').trim();
     if (!u) return u;
-    var m = u.match(/[?&]id=([a-zA-Z0-9_-]+)/) || u.match(/\/d\/([a-zA-Z0-9_-]+)/) || u.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-    if (m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1600';
-    return u;
+    var id = '';
+    var m1 = u.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+    var m2 = u.match(/\/d\/([a-zA-Z0-9_-]{10,})/);
+    var m3 = u.match(/\/file\/d\/([a-zA-Z0-9_-]{10,})/);
+    var m4 = u.match(/thumbnail\?id=([a-zA-Z0-9_-]{10,})/);
+    if (m1) id = m1[1];
+    else if (m2) id = m2[1];
+    else if (m3) id = m3[1];
+    else if (m4) id = m4[1];
+    else if (/^[a-zA-Z0-9_-]{25,}$/.test(u)) id = u;
+    if (!id) return u;
+    // googleusercontent ổn định hơn cho <img>
+    return 'https://lh3.googleusercontent.com/d/' + id + '=w1600';
   }
 
   function youtubeId(url) {
@@ -574,47 +603,78 @@
   function renderPostForm(post) {
     post = post || {};
     setText('#crumb', post.postId ? 'Sửa bài' : 'Viết bài mới');
+    var today = new Date().toISOString().slice(0, 10);
     var extraImgs = [];
     try {
       if (post.contentHtml) {
-        var re = /src="(https?:[^"]+)"/g, mm;
+        var re = /src=["'](https?:[^"']+)["']/g, mm;
         while ((mm = re.exec(post.contentHtml))) extraImgs.push(mm[1]);
       }
     } catch (e) {}
+
     setHtml('#workMain',
-      '<div class="panel"><h3>' + (post.postId ? 'Sửa bài viết' : 'Viết bài mới') + '</h3>' +
-      '<form class="form" id="postForm">' +
+      '<div class="panel form-panel">' +
+      '<h3>' + (post.postId ? 'Sửa bài viết' : 'Viết bài mới') + '</h3>' +
+      '<form id="postForm" class="form form-post">' +
       '<input type="hidden" name="postId" value="' + esc(post.postId || '') + '">' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">Thông tin bài</div>' +
+      '<div class="form-grid-2">' +
       field('Tiêu đề', 'title', post.title) +
-      field('Danh mục / Menu hiển thị', 'category', post.category || categoryNames()[0], 'select-cat') +
+      field('Danh mục / Menu', 'category', post.category || categoryNames()[0], 'select-cat') +
       field('Tóm tắt', 'summary', post.summary) +
-      field('Ngày đăng', 'publishedAt', (post.publishedAt || new Date().toISOString()).slice(0, 10), 'date') +
+      field('Ngày đăng', 'publishedAt', (post.publishedAt || today).slice(0, 10), 'date') +
+      '</div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">Ảnh & media</div>' +
+      '<div class="form-grid-2">' +
       field('Ảnh đại diện (URL)', 'thumbnailUrl', post.thumbnailUrl, 'url') +
-      field('Video YouTube hoặc .mp4 (URL)', 'videoUrl', '', 'url') +
-      field('Nội dung', 'bodyText', stripHtml(post.contentHtml), 'textarea') +
-      '<label>Trạng thái<select name="status">' +
-      '<option value="DRAFT">Nháp</option>' +
-      '<option value="PUBLISHED"' + (post.status === 'PUBLISHED' ? ' selected' : '') + '>Công khai</option></select></label>' +
-      '<label><span style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="pinned" value="true"' +
-      (post.pinned === true || String(post.pinned) === 'true' ? ' checked' : '') + '> Ghim</span></label>' +
-      '<div class="span2" style="grid-column:1/-1">' +
-      '<b>Ảnh trong bài</b> (nhiều ảnh — URL hoặc upload Drive)' +
+      field('Video YouTube / .mp4 (URL)', 'videoUrl', '', 'url') +
+      '</div>' +
+      '<div class="img-block">' +
+      '<div class="img-block-head"><b>Ảnh trong bài</b><span class="dim">Có thể thêm nhiều ảnh</span></div>' +
       '<div id="imgList" class="img-list"></div>' +
-      '<div class="actions-row" style="margin-top:8px">' +
-      '<button type="button" class="btn btn-outline" id="btnAddImgUrl">+ Thêm URL ảnh</button> ' +
-      '<label class="btn btn-outline">Upload file<input type="file" id="postImgFile" accept="image/*" hidden multiple></label>' +
-      '<span class="dim" id="upMsg"></span></div></div>' +
-      '<label class="span2 actions-row"><button class="btn btn-primary" type="submit">Lưu</button> ' +
-      '<button class="btn btn-outline" type="button" id="btnCancelPost">Hủy</button></label></form></div>');
+      '<div class="btn-group img-actions">' +
+      '<button type="button" class="btn btn-outline" id="btnAddImgUrl">+ Thêm URL</button>' +
+      '<label class="btn btn-outline file-btn">Upload file<input type="file" id="postImgFile" accept="image/*" hidden multiple></label>' +
+      '<span class="dim" id="upMsg"></span></div></div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">Nội dung</div>' +
+      field('Nội dung bài viết', 'bodyText', stripHtml(post.contentHtml), 'textarea') +
+      '</div>' +
+
+      '<div class="form-section form-section-row">' +
+      '<label class="field-inline">Trạng thái' +
+      '<select name="status">' +
+      '<option value="DRAFT">Nháp</option>' +
+      '<option value="PUBLISHED"' + (post.status === 'PUBLISHED' ? ' selected' : '') + '>Công khai</option>' +
+      '</select></label>' +
+      '<label class="check-inline"><input type="checkbox" name="pinned" value="true"' +
+      (post.pinned === true || String(post.pinned) === 'true' ? ' checked' : '') + '> Ghim bài</label>' +
+      '</div>' +
+
+      '<div class="form-footer">' +
+      '<button class="btn btn-primary" type="submit">Lưu bài viết</button>' +
+      '<button class="btn btn-outline" type="button" id="btnCancelPost">Hủy</button>' +
+      '</div></form></div>');
 
     var imgUrls = extraImgs.slice();
     function renderImgList() {
       var box = el('imgList');
       if (!box) return;
+      if (!imgUrls.length) {
+        box.innerHTML = '<p class="dim empty-imgs">Chưa có ảnh trong bài.</p>';
+        return;
+      }
       box.innerHTML = imgUrls.map(function (u, i) {
-        return '<div class="img-row"><img src="' + esc(fixDriveUrl(u)) + '" alt=""><input type="text" value="' + esc(u) + '" data-i="' + i + '">' +
+        return '<div class="img-row">' +
+          '<img src="' + esc(fixDriveUrl(u)) + '" alt="" onerror="this.style.opacity=.25">' +
+          '<input type="text" value="' + esc(u) + '" data-i="' + i + '">' +
           '<button type="button" class="btn-sm btn-danger" data-rm="' + i + '">Xóa</button></div>';
-      }).join('') || '<p class="dim">Chưa có ảnh trong bài.</p>';
+      }).join('');
       $$('#imgList [data-rm]').forEach(function (b) {
         b.onclick = function () {
           imgUrls.splice(Number(b.getAttribute('data-rm')), 1);
@@ -634,37 +694,44 @@
     el('postImgFile').onchange = function () {
       var files = Array.prototype.slice.call(el('postImgFile').files || []);
       if (!files.length) return;
-      setText('#upMsg', 'Đang upload ' + files.length + ' ảnh…');
+      setText('#upMsg', 'Đang tải ' + files.length + ' ảnh…');
       var chain = Promise.resolve();
       files.forEach(function (f) {
         chain = chain.then(function () {
           return uploadFileInput(f).then(function (res) {
-            imgUrls.push(res.url);
+            var url = fixDriveUrl(res.url || res.fileId || '');
+            if (res.fileId && !res.url) url = fixDriveUrl(res.fileId);
+            imgUrls.push(res.url || url);
             renderImgList();
           });
         });
       });
-      chain.then(function () { setText('#upMsg', 'Xong'); toast('Đã upload ảnh'); })
-        .catch(function (err) { setText('#upMsg', err.message); toast(err.message); });
+      chain.then(function () {
+        setText('#upMsg', 'Upload xong');
+        toast('Đã thêm ảnh');
+        el('postImgFile').value = '';
+      }).catch(function (err) {
+        setText('#upMsg', err.message || 'Lỗi upload');
+        toast(err.message || 'Lỗi upload (thử ảnh nhỏ hơn)');
+      });
     };
 
     el('postForm').onsubmit = function (e) {
       e.preventDefault();
       var fd = Object.fromEntries(new FormData(e.target));
       fd.pinned = !!(e.target.pinned && e.target.pinned.checked);
-      // collect img urls from inputs
       $$('#imgList input[data-i]').forEach(function (inp) {
-        var i = Number(inp.getAttribute('data-i'));
-        imgUrls[i] = inp.value.trim();
+        imgUrls[Number(inp.getAttribute('data-i'))] = inp.value.trim();
       });
-      imgUrls = imgUrls.filter(Boolean);
+      imgUrls = imgUrls.filter(Boolean).map(fixDriveUrl);
       var mediaHtml = imgUrls.map(function (u) {
-        return '<p class="media-img"><img src="' + esc(fixDriveUrl(u)) + '" alt=""></p>';
+        return '<p class="media-img"><img src="' + esc(u) + '" alt=""></p>';
       }).join('');
       var body = buildContentHtml(fd.bodyText, '', fd.videoUrl);
       fd.contentHtml = mediaHtml + body;
-      if (!fd.publishedAt) fd.publishedAt = new Date().toISOString().slice(0, 10);
+      if (!fd.publishedAt) fd.publishedAt = today;
       if (/^\d{4}-\d{2}-\d{2}$/.test(fd.publishedAt)) fd.publishedAt = fd.publishedAt + 'T00:00:00.000Z';
+      if (fd.thumbnailUrl) fd.thumbnailUrl = fixDriveUrl(fd.thumbnailUrl);
       if (!fd.postId) delete fd.postId;
       delete fd.bodyText; delete fd.videoUrl;
       api('savePost', fd).then(function () {
