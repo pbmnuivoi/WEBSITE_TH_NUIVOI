@@ -17,6 +17,69 @@
   function hide(sel) { var n = $(sel); if (n) n.classList.add('hidden'); }
   function on(id, ev, fn) { var n = el(id); if (n) n.addEventListener(ev, fn); }
 
+  // Khóa nút ngay khi người dùng bấm; giữ trạng thái loading trong toàn bộ chuỗi API.
+  var recentActionButton = null;
+  function markButtonBusy(button) {
+    if (!button || button.tagName !== 'BUTTON') return;
+    if (button.__busyTimer) { clearTimeout(button.__busyTimer); button.__busyTimer = null; }
+    if (!button.__busyCount) {
+      button.__wasDisabled = button.disabled;
+      button.classList.add('is-loading');
+      button.setAttribute('aria-busy', 'true');
+      button.disabled = true;
+    }
+    button.__busyCount = (button.__busyCount || 0) + 1;
+  }
+  function releaseButtonBusy(button) {
+    if (!button || !button.__busyCount) return;
+    button.__busyCount = Math.max(0, button.__busyCount - 1);
+    if (button.__busyCount) return;
+    // Đợi ngắn để các API nối tiếp trong cùng thao tác tiếp tục dùng chung nút.
+    button.__busyTimer = setTimeout(function () {
+      if (button.__busyCount) return;
+      button.classList.remove('is-loading');
+      button.removeAttribute('aria-busy');
+      button.disabled = !!button.__wasDisabled;
+      button.__busyTimer = null;
+    }, 700);
+  }
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('button') : null;
+    if (!button || button.disabled) return;
+    recentActionButton = button;
+    markButtonBusy(button);
+    // Trường hợp nút chỉ thực hiện thao tác cục bộ, tự mở khóa sau thời gian ngắn.
+    (function clearActionContext() {
+      setTimeout(function () {
+        if (button.__fetchStarted && button.__busyCount > 0) return clearActionContext();
+        if (recentActionButton === button) recentActionButton = null;
+        if (!button.__fetchStarted && button.__busyCount) releaseButtonBusy(button);
+      }, 1800);
+    })();
+  }, true);
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    var button = event.submitter || (form && form.querySelector('button[type="submit"],button:not([type])'));
+    if (!button || button.disabled) return;
+    recentActionButton = button;
+    markButtonBusy(button);
+    (function clearSubmitContext() {
+      setTimeout(function () {
+        if (button.__fetchStarted && button.__busyCount > 0) return clearSubmitContext();
+        if (recentActionButton === button) recentActionButton = null;
+        if (!button.__fetchStarted && button.__busyCount) releaseButtonBusy(button);
+      }, 1800);
+    })();
+  }, true);
+  function trackedFetch(input, init) {
+    var button = recentActionButton;
+    if (button) button.__fetchStarted = true;
+    if (button && !button.__busyCount) markButtonBusy(button);
+    return window.fetch(input, init).finally(function () {
+      if (button) releaseButtonBusy(button);
+    });
+  }
+
   var state = {
     token: sessionStorage.getItem('school_token') || '',
     user: null, config: {}, menus: [], apps: [], posts: [], categories: [],
@@ -121,7 +184,7 @@
     if (!url || String(url).indexOf('YOUR-WORKER') >= 0) {
       return Promise.reject(new Error('Chưa cấu hình API_URL'));
     }
-    return fetch(url, {
+    return trackedFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: action, data: Object.assign({}, data || {}, { token: state.token }) })
@@ -135,7 +198,7 @@
   function apiWithToken(action, data, token) {
     var url = window.APP_CONFIG && window.APP_CONFIG.API_URL;
     if (!url) return Promise.reject(new Error('Chưa cấu hình API_URL'));
-    return fetch(url, {
+    return trackedFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: action, data: Object.assign({}, data || {}, { token: token }) })
@@ -200,7 +263,7 @@
           submit.textContent = 'Đăng nhập và thực hiện';
           return;
         }
-        fetch(loginUrl, {
+        trackedFetch(loginUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({
@@ -214,7 +277,7 @@
           }
           var freshToken = j.data.token;
           function revokeFreshToken() {
-            return fetch(loginUrl, {
+            return trackedFetch(loginUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'text/plain;charset=utf-8' },
               body: JSON.stringify({ action: 'logout', data: { token: freshToken } })
