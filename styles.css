@@ -626,3 +626,40 @@ button.is-loading::after {
 .icon-choice:hover,.icon-choice.selected { border-color:var(--primary, #2457a7); background:rgba(36,87,167,.08); }
 .icon-choice svg { width:22px; height:22px; }
 .icon-choice small { font-size:10px; overflow-wrap:anywhere; }
+
+/* ===== Responsive fix: phần Giới thiệu trên điện thoại ===== */
+#publicMain,
+#publicMain .sec,
+#publicMain .panel,
+#publicMain .intro-box {
+  min-width: 0;
+  max-width: 100%;
+}
+#publicMain .intro-box {
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+#publicMain .intro-box p {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.75;
+}
+#publicMain .intro-box .dim {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  #publicMain .main,
+  #publicMain .sec {
+    min-width: 0;
+  }
+  #publicMain .intro-box {
+    padding: 16px;
+    border-radius: 12px;
+  }
+  #publicMain .intro-box p {
+    font-size: 14px;
+    line-height: 1.75;
+  }
+}
