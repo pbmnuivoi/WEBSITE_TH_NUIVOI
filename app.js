@@ -361,14 +361,28 @@
   function openPublicPost(id) {
     function view(p) {
       if (!p) return toast('Không tìm thấy bài viết');
-      var media = p.thumbnailUrl
-        ? '<p class="media-img"><img src="' + esc(p.thumbnailUrl) + '" alt=""></p>' : '';
+      var html = p.contentHtml || '';
+      var imgs = [];
+      var re = /src=["'](https?:[^"']+)["']/gi, mm;
+      while ((mm = re.exec(html))) {
+        if (imgs.indexOf(mm[1]) < 0) imgs.push(mm[1]);
+      }
+      if (p.thumbnailUrl && imgs.indexOf(p.thumbnailUrl) < 0) imgs.unshift(p.thumbnailUrl);
+      // bỏ thẻ img trong body để tránh trùng, giữ text/video
+      var body = html.replace(/<p class="media-img">[\s\S]*?<\/p>/gi, '').replace(/<img[^>]*>/gi, '');
+      var gal = imgs.length
+        ? '<div class="article-gallery">' + imgs.map(function (u) {
+            return '<a class="g-item" href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" alt="" loading="lazy"></a>';
+          }).join('') + '</div>'
+        : '';
+      var dt = (p.publishedAt || p.createdAt || '').toString().slice(0, 10);
       setHtml('#publicMain',
         '<article class="panel article">' +
         '<span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
         '<h1>' + esc(p.title) + '</h1>' +
-        '<p class="dim">' + esc(p.summary || '') + '</p>' + media +
-        '<div class="article-body">' + (p.contentHtml || '') + '</div>' +
+        '<p class="dim">' + esc(p.summary || '') + (dt ? ' · ' + esc(dt) : '') + '</p>' +
+        gal +
+        '<div class="article-body">' + body + '</div>' +
         '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Về trang chủ</button></p></article>');
       var b = el('backPub');
       if (b) b.onclick = renderPublicHome;
@@ -483,11 +497,16 @@
     loader.then(function (posts) {
       if (!Array.isArray(posts)) posts = state.posts || [];
       state._allPosts = posts;
-      function draw(filter) {
+      function draw(filter, fromD, toD) {
         var q = (filter || '').toLowerCase().trim();
+        fromD = fromD || '';
+        toD = toD || '';
         var list = posts.filter(function (p) {
+          var dt = (p.publishedAt || p.createdAt || p.updatedAt || '').toString().slice(0, 10);
+          if (fromD && dt && dt < fromD) return false;
+          if (toD && dt && dt > toD) return false;
           if (!q) return true;
-          return (p.title + ' ' + p.category + ' ' + p.summary).toLowerCase().indexOf(q) >= 0;
+          return (p.title + ' ' + p.category + ' ' + (p.summary || '')).toLowerCase().indexOf(q) >= 0;
         });
         var rows = list.map(function (p) {
           var dt = (p.publishedAt || p.createdAt || p.updatedAt || '').toString().slice(0, 10);
@@ -500,18 +519,28 @@
         setHtml('#workMain',
           '<div class="panel"><div class="toolbar"><h3 style="margin:0">Bài viết</h3>' +
           '<button type="button" class="btn btn-primary" id="btnNewPost">+ Viết bài</button></div>' +
-          '<div class="search-bar"><input type="search" id="postSearch" placeholder="Tìm theo tiêu đề, danh mục…" value="' + esc(filter || '') + '"></div>' +
+          '<div class="search-bar">' +
+          '<input type="search" id="postSearch" placeholder="Tìm tiêu đề, danh mục…" value="' + esc(filter || '') + '">' +
+          '<label class="dim">Từ <input type="date" id="dateFrom" value="' + esc(fromD) + '"></label>' +
+          '<label class="dim">đến <input type="date" id="dateTo" value="' + esc(toD) + '"></label>' +
+          '<button type="button" class="btn-sm" id="btnFilterDate">Lọc</button></div>' +
           (rows
             ? '<div class="table-wrap"><table class="table"><thead><tr><th>Bài (ngày)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
             : '<div class="empty">Không có bài phù hợp.</div>') +
-          '<p class="dim" style="margin-top:10px">Xóa vĩnh viễn. Ngày đăng hiển thị từ publishedAt / createdAt.</p></div>');
+          '<p class="dim" style="margin-top:10px">Lọc theo từ khóa và khoảng ngày đăng.</p></div>');
         el('btnNewPost').onclick = function () { renderPostForm(null); };
-        var se = el('postSearch');
-        if (se) {
-          se.oninput = function () { draw(se.value); };
-          se.focus();
-          se.setSelectionRange(se.value.length, se.value.length);
+        function rerun() {
+          draw(
+            (el('postSearch') && el('postSearch').value) || '',
+            (el('dateFrom') && el('dateFrom').value) || '',
+            (el('dateTo') && el('dateTo').value) || ''
+          );
         }
+        var se = el('postSearch');
+        if (se) se.onkeydown = function (ev) { if (ev.key === 'Enter') rerun(); };
+        var bf = el('btnFilterDate');
+        if (bf) bf.onclick = rerun;
+
         $$('#workMain [data-edit]').forEach(function (b) {
           b.onclick = function () {
             var p = posts.find(function (x) { return x.postId === b.getAttribute('data-edit'); });
@@ -550,7 +579,7 @@
       field('Tiêu đề', 'title', post.title) +
       field('Danh mục / Menu hiển thị', 'category', post.category || categoryNames()[0], 'select-cat') +
       field('Tóm tắt', 'summary', post.summary) +
-      field('Ngày đăng (YYYY-MM-DD)', 'publishedAt', (post.publishedAt || '').slice(0, 10)) +
+      field('Ngày đăng', 'publishedAt', (post.publishedAt || new Date().toISOString()).slice(0, 10), 'date') +
       field('Ảnh đại diện (URL)', 'thumbnailUrl', post.thumbnailUrl, 'url') +
       field('Video YouTube hoặc .mp4 (URL)', 'videoUrl', '', 'url') +
       field('Nội dung', 'bodyText', stripHtml(post.contentHtml), 'textarea') +
@@ -625,10 +654,8 @@
       }).join('');
       var body = buildContentHtml(fd.bodyText, '', fd.videoUrl);
       fd.contentHtml = mediaHtml + body;
-      if (fd.publishedAt) {
-        // normalize to ISO if date only
-        if (/^\d{4}-\d{2}-\d{2}$/.test(fd.publishedAt)) fd.publishedAt = fd.publishedAt + 'T00:00:00.000Z';
-      }
+      if (!fd.publishedAt) fd.publishedAt = new Date().toISOString().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(fd.publishedAt)) fd.publishedAt = fd.publishedAt + 'T00:00:00.000Z';
       if (!fd.postId) delete fd.postId;
       delete fd.bodyText; delete fd.videoUrl;
       api('savePost', fd).then(function () {
