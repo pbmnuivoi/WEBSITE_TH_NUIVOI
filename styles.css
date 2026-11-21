@@ -459,3 +459,43 @@ a.card{text-decoration:none}
 .check-inline input{width:16px!important;height:16px!important;min-height:0!important}
 .field-inline select{height:40px}
 @media(max-width:700px){.switch-grid{grid-template-columns:1fr}}
+
+
+/* Cấu hình cổng: vùng nhập mô tả/giới thiệu dễ đọc và dễ thao tác */
+.form-section > label.config-textarea-field,
+.form-section > label.span2.config-textarea-field{
+  display:grid;
+  grid-column:1 / -1;
+  width:100%;
+  gap:8px;
+  margin-top:14px;
+  color:#334155;
+  font-size:13px;
+  font-weight:700;
+}
+.form-section > label.config-textarea-field textarea{
+  display:block;
+  box-sizing:border-box;
+  width:100%;
+  min-height:150px;
+  padding:12px 14px;
+  border:1px solid #cbd5e1;
+  border-radius:10px;
+  background:#fff;
+  color:#0f172a;
+  font:500 14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;
+  resize:vertical;
+  white-space:pre-wrap;
+}
+.form-section > label.config-textarea-field textarea[name="introHtml"]{
+  min-height:220px;
+}
+.form-section > label.config-textarea-field textarea:focus{
+  outline:none;
+  border-color:var(--p);
+  box-shadow:0 0 0 3px rgba(30,74,140,.12);
+}
+@media(max-width:700px){
+  .form-section > label.config-textarea-field textarea{min-height:130px}
+  .form-section > label.config-textarea-field textarea[name="introHtml"]{min-height:190px}
+}
