@@ -1,6 +1,9 @@
 /**
- * Cổng thông tin — Public home + Workspace CRUD
- * Ưu tiên: thêm / sửa / xóa dễ dùng; media ảnh & video cho tin tức
+ * Cổng thông tin — Public chuyên nghiệp + Workspace CRUD
+ * - Menu HOME từ dữ liệu (không ép "Trang chủ")
+ * - Bài viết gắn danh mục/menu → lọc theo menu
+ * - Trang chủ: giới thiệu, tin mới, thông báo, liên hệ, ảnh hover
+ * - Load: hiện khung ngay, dữ liệu đổ sau (không trắng lâu)
  */
 (function () {
   'use strict';
@@ -16,8 +19,8 @@
 
   var state = {
     token: sessionStorage.getItem('school_token') || '',
-    user: null, config: {}, menus: [], apps: [], posts: [],
-    isAdmin: false, mode: 'public', editingPost: null
+    user: null, config: {}, menus: [], apps: [], posts: [], categories: [],
+    isAdmin: false, mode: 'public'
   };
 
   var ICONS = {
@@ -40,9 +43,9 @@
   }
   function toast(msg) {
     var n = el('toast');
-    if (!n) return console.log(msg);
+    if (!n) return;
     n.textContent = msg; n.classList.add('show');
-    setTimeout(function () { n.classList.remove('show'); }, 2600);
+    setTimeout(function () { n.classList.remove('show'); }, 2500);
   }
 
   function api(action, data) {
@@ -65,8 +68,18 @@
     state.menus = (d.menus || []).filter(function (m) { return String(m.status) !== 'OFF'; });
     state.apps = dedupe(d.apps || []);
     state.posts = d.posts || [];
+    state.categories = d.categories || defaultCategories();
     state.isAdmin = !!d.isAdmin;
     if (withUser) state.user = d.user || null;
+  }
+
+  function defaultCategories() {
+    return [
+      { categoryId: 'C_TB', name: 'Thông báo' },
+      { categoryId: 'C_HD', name: 'Hoạt động' },
+      { categoryId: 'C_CD', name: 'Chuyên đề' },
+      { categoryId: 'C_VB', name: 'Văn bản' }
+    ];
   }
 
   function dedupe(list) {
@@ -80,56 +93,87 @@
     return out;
   }
 
+  /** Menu công khai — không tự thêm "Trang chủ" */
   function homeMenus() {
     return state.menus
       .filter(function (m) {
+        var loc = String(m.location || '').toUpperCase();
+        if (loc !== 'HOME') return false;
+        // bỏ các id trang chủ trùng
         if (m.menuId === 'M_HOME' || m.menuId === 'HOME') return false;
-        return String(m.location || '').toUpperCase() === 'HOME';
+        if (String(m.title || '').trim().toLowerCase() === 'trang chủ') return false;
+        return true;
       })
       .sort(function (a, b) { return Number(a.sortOrder || 0) - Number(b.sortOrder || 0); });
   }
 
-  /* —— Media helpers: ảnh + video trong nội dung —— */
+  function categoryNames() {
+    var fromCat = (state.categories || []).map(function (c) { return c.name; });
+    var fromMenus = homeMenus().map(function (m) { return m.title; });
+    var set = {};
+    fromCat.concat(fromMenus).forEach(function (n) {
+      if (n) set[n] = 1;
+    });
+    var list = Object.keys(set);
+    return list.length ? list : ['Thông báo', 'Hoạt động', 'Chuyên đề', 'Văn bản'];
+  }
+
+  function postsByCategory(name) {
+    return (state.posts || []).filter(function (p) {
+      return String(p.category || '').trim().toLowerCase() === String(name || '').trim().toLowerCase();
+    });
+  }
+
   function youtubeId(url) {
     if (!url) return '';
     var m = String(url).match(/(?:youtu\.be\/|v=|\/embed\/|shorts\/)([A-Za-z0-9_-]{6,})/);
     return m ? m[1] : '';
   }
+
   function buildContentHtml(text, imageUrl, videoUrl) {
     var html = '';
     if (imageUrl) {
-      html += '<p class="media-img"><img src="' + esc(imageUrl) + '" alt="" loading="lazy" style="max-width:100%;border-radius:12px"></p>';
+      html += '<p class="media-img"><img src="' + esc(imageUrl) + '" alt="" loading="lazy"></p>';
     }
     var yid = youtubeId(videoUrl);
     if (yid) {
       html += '<div class="media-video"><iframe src="https://www.youtube.com/embed/' + yid +
-        '" title="Video" frameborder="0" allowfullscreen loading="lazy" ' +
-        'style="width:100%;aspect-ratio:16/9;border-radius:12px;border:0"></iframe></div>';
+        '" title="Video" allowfullscreen loading="lazy"></iframe></div>';
     } else if (videoUrl && /\.(mp4|webm)(\?|$)/i.test(videoUrl)) {
-      html += '<p class="media-video"><video src="' + esc(videoUrl) + '" controls style="max-width:100%;border-radius:12px"></video></p>';
+      html += '<p class="media-video"><video src="' + esc(videoUrl) + '" controls></video></p>';
     }
     if (text) {
-      // plain text → paragraphs
       html += String(text).split(/\n{2,}/).map(function (p) {
         return '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>';
       }).join('');
     }
     return html;
   }
-  function postCardHtml(p) {
+
+  function postCard(p) {
     var thumb = p.thumbnailUrl
-      ? '<div class="post-thumb"><img src="' + esc(p.thumbnailUrl) + '" alt="" loading="lazy" onerror="this.parentNode.style.display=\'none\'"></div>'
-      : '';
+      ? '<div class="post-thumb"><img src="' + esc(p.thumbnailUrl) + '" alt="" loading="lazy" onerror="this.parentNode.classList.add(\'no-img\')"></div>'
+      : '<div class="post-thumb no-img"></div>';
     return '<article class="post" data-post="' + esc(p.postId) + '">' + thumb +
       '<div class="post-body"><span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
       '<h3>' + esc(p.title) + '</h3><p>' + esc(p.summary || '') + '</p></div></article>';
+  }
+
+  function bindPostClicks(root) {
+    $$((root || document) + ' [data-post]'.replace(/^ /, '')).length;
+    var scope = root ? $(root) : document;
+    if (!scope) return;
+    $$('[data-post]', scope).forEach(function (node) {
+      node.onclick = function () { openPublicPost(node.getAttribute('data-post')); };
+    });
   }
 
   /* ===== PUBLIC ===== */
   function showPublic() {
     state.mode = 'public';
     show('#publicApp'); hide('#workApp');
-    paintPublicShell(); renderPublicHome();
+    paintPublicShell();
+    renderPublicHome();
   }
 
   function paintPublicShell() {
@@ -141,15 +185,15 @@
     setText('#fAddr', cfg.address || 'Địa chỉ đơn vị');
     setText('#fContact', [cfg.phone && ('ĐT: ' + cfg.phone), cfg.email].filter(Boolean).join(' · ') || '—');
 
-    // Chỉ 1 lần Trang chủ + menu HOME (không trùng)
-    var items = [{ id: 'HOME', title: 'Trang chủ', icon: 'house' }].concat(
-      homeMenus().map(function (m) { return { id: m.menuId, title: m.title, icon: m.icon }; })
-    );
+    // Logo click = trang chủ; nav chỉ menu HOME từ dữ liệu
+    var items = homeMenus().map(function (m) {
+      return { id: m.menuId, title: m.title, icon: m.icon };
+    });
     var html = items.map(function (it) {
       return '<button type="button" data-home="' + esc(it.id) + '"><span>' + icon(it.icon) + '</span> ' + esc(it.title) + '</button>';
     }).join('');
-    setHtml('#homeNav', html);
-    setHtml('#homeMnav', html);
+    setHtml('#homeNav', html || '');
+    setHtml('#homeMnav', html || '');
     $$('#homeNav [data-home], #homeMnav [data-home]').forEach(function (b) {
       b.onclick = function () {
         hide('#homeMnav');
@@ -159,66 +203,128 @@
   }
 
   function navHome(id) {
-    if (id === 'HOME') return renderPublicHome();
     var m = state.menus.find(function (x) { return x.menuId === id; });
-    if (!m) return;
+    if (!m) return renderPublicHome();
     if (m.url && /^https?:/i.test(m.url)) {
       window.open(m.url, m.openMode === 'SAME' ? '_self' : '_blank', 'noopener');
       return;
     }
-    setHtml('#publicMain', '<div class="panel"><h1>' + esc(m.title) + '</h1><p class="dim">Nội dung đang cập nhật.</p></div>');
+    // Nội dung theo danh mục = tên menu
+    var list = postsByCategory(m.title);
+    var body = list.length
+      ? '<div class="post-grid">' + list.map(postCard).join('') + '</div>'
+      : '<div class="empty">Chưa có bài trong mục “' + esc(m.title) + '”. Admin hãy đăng bài và chọn đúng danh mục.</div>';
+    setHtml('#publicMain',
+      '<div class="page-head"><button type="button" class="btn btn-outline btn-sm" id="backHome">← Trang chủ</button>' +
+      '<h1>' + esc(m.title) + '</h1></div>' + body);
+    var bh = el('backHome');
+    if (bh) bh.onclick = renderPublicHome;
+    bindPostClicks('#publicMain');
   }
 
   function renderPublicHome() {
     var cfg = state.config || {};
+    var posts = state.posts || [];
+    var news = posts.filter(function (p) {
+      var c = String(p.category || '').toLowerCase();
+      return c.indexOf('thông báo') < 0 && c.indexOf('thong bao') < 0;
+    }).slice(0, 6);
+    var notices = posts.filter(function (p) {
+      var c = String(p.category || '').toLowerCase();
+      return c.indexOf('thông báo') >= 0 || c.indexOf('thong bao') >= 0;
+    }).slice(0, 5);
+    if (!news.length && posts.length) news = posts.slice(0, 6);
+    if (!notices.length && posts.length) notices = posts.slice(0, 3);
+
+    var gallery = [cfg.bannerUrl, cfg.gallery1, cfg.gallery2, cfg.gallery3, cfg.gallery4]
+      .filter(Boolean);
+
     var appHtml = state.apps.length
       ? state.apps.map(function (a) {
           var letter = (a.title || 'A').charAt(0).toUpperCase();
-          return '<a class="card" href="' + esc(a.url) + '" target="_blank" rel="noopener">' +
+          return '<a class="card hover-lift" href="' + esc(a.url) + '" target="_blank" rel="noopener">' +
             '<span class="badge-ico" style="background:' + color(a.title) + '">' + esc(letter) + '</span>' +
             '<span><b>' + esc(a.title) + '</b><small>' + esc(a.category || 'Ứng dụng') + '</small></span></a>';
         }).join('')
-      : '<div class="empty">Chưa có ứng dụng.</div>';
+      : '';
 
-    var postHtml = state.posts.length
-      ? '<div class="post-grid">' + state.posts.map(postCardHtml).join('') + '</div>'
-      : '<div class="empty">Chưa có tin tức / thông báo.</div>';
+    var galleryHtml = gallery.length
+      ? '<section class="sec"><div class="sec-h"><h2>Hình ảnh nhà trường</h2></div>' +
+        '<div class="gallery">' + gallery.map(function (src) {
+          return '<div class="gallery-item hover-zoom"><img src="' + esc(src) + '" alt="" loading="lazy"></div>';
+        }).join('') + '</div></section>'
+      : '';
+
+    var newsHtml = news.length
+      ? '<div class="post-grid">' + news.map(postCard).join('') + '</div>'
+      : '<div class="empty">Chưa có tin mới.</div>';
+
+    var noticeHtml = notices.length
+      ? '<ul class="notice-list">' + notices.map(function (p) {
+          return '<li data-post="' + esc(p.postId) + '"><span class="tag">' + esc(p.category || 'Thông báo') + '</span> ' +
+            '<b>' + esc(p.title) + '</b><span class="dim"> — ' + esc(p.summary || '') + '</span></li>';
+        }).join('') + '</ul>'
+      : '<div class="empty">Chưa có thông báo.</div>';
+
+    var intro = cfg.introHtml || cfg.welcomeText || 'Không gian thông tin và tiện ích làm việc dành cho cán bộ, giáo viên, nhân viên và cộng đồng.';
 
     setHtml('#publicMain',
       '<section class="hero">' +
+      (cfg.bannerUrl ? '<div class="hero-bg" style="background-image:url(' + esc(cfg.bannerUrl) + ')"></div>' : '') +
+      '<div class="hero-content">' +
       '<div class="badge">Cổng thông tin công khai</div>' +
       '<h1>' + esc(cfg.welcomeTitle || cfg.schoolName || 'Cổng thông tin trường học') + '</h1>' +
-      '<p>' + esc(cfg.welcomeText || 'Tin tức, tiện ích và không gian làm việc số.') + '</p>' +
+      '<p>' + esc(cfg.welcomeText || intro) + '</p>' +
       '<div class="hero-actions">' +
-      '<button type="button" class="btn btn-primary lg" id="heroLogin">Đăng nhập làm việc</button>' +
-      '<a class="btn btn-outline lg" href="#sec-posts">Xem tin tức</a></div></section>' +
-      '<section class="sec" id="sec-apps"><div class="sec-h"><h2>Ứng dụng thường dùng</h2></div>' +
-      '<div class="grid">' + appHtml + '</div></section>' +
-      '<section class="sec" id="sec-posts"><div class="sec-h"><h2>Tin tức &amp; thông báo</h2></div>' +
-      postHtml + '</section>');
+      '<button type="button" class="btn btn-primary lg" id="heroLogin">Đăng nhập làm việc</button> ' +
+      '<a class="btn btn-outline lg" href="#sec-news">Xem tin tức</a></div></div></section>' +
+
+      '<section class="sec" id="sec-intro"><div class="sec-h"><h2>Giới thiệu</h2></div>' +
+      '<div class="panel intro-box"><p>' + esc(intro) + '</p>' +
+      (cfg.address || cfg.phone || cfg.email
+        ? '<p class="dim" style="margin-top:12px">' +
+          [cfg.address, cfg.phone && ('ĐT: ' + cfg.phone), cfg.email].filter(Boolean).join(' · ') + '</p>'
+        : '') +
+      '</div></section>' +
+
+      (appHtml ? '<section class="sec"><div class="sec-h"><h2>Ứng dụng thường dùng</h2></div><div class="grid">' + appHtml + '</div></section>' : '') +
+
+      galleryHtml +
+
+      '<section class="sec" id="sec-news"><div class="sec-h"><h2>Tin mới nhất</h2></div>' + newsHtml + '</section>' +
+
+      '<section class="sec" id="sec-notice"><div class="sec-h"><h2>Thông báo</h2></div>' +
+      '<div class="panel">' + noticeHtml + '</div></section>' +
+
+      '<section class="sec" id="sec-contact"><div class="sec-h"><h2>Liên hệ</h2></div>' +
+      '<div class="panel contact-grid">' +
+      '<div><b>Đơn vị</b><p class="dim">' + esc(cfg.schoolName || '—') + '</p></div>' +
+      '<div><b>Địa chỉ</b><p class="dim">' + esc(cfg.address || '—') + '</p></div>' +
+      '<div><b>Điện thoại</b><p class="dim">' + esc(cfg.phone || '—') + '</p></div>' +
+      '<div><b>Email</b><p class="dim">' + esc(cfg.email || '—') + '</p></div>' +
+      '</div></section>');
 
     var hl = el('heroLogin');
     if (hl) hl.onclick = openLogin;
-    $$('#publicMain [data-post]').forEach(function (node) {
-      node.onclick = function () { openPublicPost(node.getAttribute('data-post')); };
+    bindPostClicks('#publicMain');
+    $$('#publicMain .notice-list [data-post]').forEach(function (li) {
+      li.style.cursor = 'pointer';
+      li.onclick = function () { openPublicPost(li.getAttribute('data-post')); };
     });
   }
 
   function openPublicPost(id) {
     function view(p) {
       if (!p) return toast('Không tìm thấy bài viết');
-      var media = '';
-      if (p.thumbnailUrl) {
-        media += '<p class="media-img"><img src="' + esc(p.thumbnailUrl) + '" alt="" style="max-width:100%;border-radius:12px"></p>';
-      }
+      var media = p.thumbnailUrl
+        ? '<p class="media-img"><img src="' + esc(p.thumbnailUrl) + '" alt=""></p>' : '';
       setHtml('#publicMain',
         '<article class="panel article">' +
         '<span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
         '<h1>' + esc(p.title) + '</h1>' +
-        '<p class="dim">' + esc(p.summary || '') + '</p>' +
-        media +
+        '<p class="dim">' + esc(p.summary || '') + '</p>' + media +
         '<div class="article-body">' + (p.contentHtml || '') + '</div>' +
-        '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Trang chủ</button></p></article>');
+        '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Về trang chủ</button></p></article>');
       var b = el('backPub');
       if (b) b.onclick = renderPublicHome;
     }
@@ -228,7 +334,7 @@
     api('getPost', { postId: id }).then(view).catch(function (e) { toast(e.message); });
   }
 
-  /* ===== WORKSPACE — sidebar gọn, chỉ chức năng CRUD ===== */
+  /* ===== WORKSPACE ===== */
   function showWork() {
     state.mode = 'work';
     hide('#publicApp'); show('#workApp');
@@ -241,10 +347,7 @@
     setText('#sideRole', (state.user && state.user.groupCode) || 'USER');
     setText('#whoName', (state.user && (state.user.fullName || state.user.username)) || '');
     setText('#ava', ((state.user && state.user.fullName) || 'U').charAt(0).toUpperCase());
-
-    // Sidebar chỉ tool — không lặp menu public
-    var html = '';
-    html += '<div class="grp">Nội dung</div>';
+    var html = '<div class="grp">Nội dung</div>';
     html += sideBtn('POSTS', '📰', 'Tin tức & thông báo');
     html += sideBtn('POST_NEW', '✎', 'Viết bài mới');
     if (state.isAdmin) {
@@ -252,7 +355,7 @@
       html += sideBtn('APPS', '▦', 'Ứng dụng');
       html += sideBtn('MENUS', '🔗', 'Menu trang chủ');
       html += sideBtn('USERS', '👤', 'Tài khoản');
-      html += sideBtn('CONFIG', '⚙', 'Cấu hình');
+      html += sideBtn('CONFIG', '⚙', 'Cấu hình & ảnh');
     }
     setHtml('#sideNav', html);
     $$('#sideNav [data-side]').forEach(function (b) {
@@ -281,18 +384,17 @@
   function renderDashboard() {
     setText('#crumb', 'Tổng quan');
     var name = (state.user && state.user.fullName) || 'bạn';
-    var cards = '' +
-      cardGo('POSTS', '📰', 'Tin tức', 'Xem · sửa · xóa bài') +
-      cardGo('POST_NEW', '✎', 'Viết bài', 'Thêm tin có ảnh / video');
+    var cards = cardGo('POSTS', '📰', 'Tin tức', 'Xem · sửa · xóa') +
+      cardGo('POST_NEW', '✎', 'Viết bài', 'Gắn danh mục / menu');
     if (state.isAdmin) {
-      cards += cardGo('APPS', '▦', 'Ứng dụng', 'Thêm · sửa · xóa') +
-        cardGo('MENUS', '🔗', 'Menu trang chủ', 'Cấu hình menu công khai') +
-        cardGo('USERS', '👤', 'Tài khoản', 'Thêm người dùng') +
-        cardGo('CONFIG', '⚙', 'Cấu hình', 'Tên trường, liên hệ');
+      cards += cardGo('MENUS', '🔗', 'Menu trang chủ', 'Mục công khai') +
+        cardGo('CONFIG', '⚙', 'Cấu hình & ảnh', 'Banner, gallery, liên hệ') +
+        cardGo('APPS', '▦', 'Ứng dụng', 'Thêm · sửa · xóa') +
+        cardGo('USERS', '👤', 'Tài khoản', 'Thêm người dùng');
     }
     setHtml('#workMain',
       '<div class="panel"><h2>Xin chào, ' + esc(name) + '</h2>' +
-      '<p class="dim">Chọn chức năng bên dưới hoặc menu trái. Ưu tiên thêm / sửa / xóa nhanh.</p>' +
+      '<p class="dim">Đăng bài chọn <b>danh mục đúng tên menu</b> để hiện khi khách bấm menu đó.</p>' +
       '<div class="grid" style="margin-top:16px">' + cards + '</div></div>');
     $$('#workMain [data-go]').forEach(function (b) {
       b.onclick = function () { navSide(b.getAttribute('data-go')); };
@@ -300,7 +402,7 @@
   }
 
   function cardGo(id, ico, title, desc) {
-    return '<button type="button" class="card" data-go="' + id + '">' +
+    return '<button type="button" class="card hover-lift" data-go="' + id + '">' +
       '<span class="badge-ico" style="background:#1e4a8c">' + ico + '</span>' +
       '<span><b>' + title + '</b><small>' + desc + '</small></span></button>';
   }
@@ -309,61 +411,55 @@
     val = val == null ? '' : val;
     type = type || 'text';
     if (type === 'textarea') {
-      return '<label class="span2">' + label + '<textarea name="' + name + '" rows="5">' + esc(val) + '</textarea></label>';
+      return '<label class="span2">' + label + '<textarea name="' + name + '" rows="4">' + esc(val) + '</textarea></label>';
     }
     if (type === 'select-status') {
       return '<label>' + label + '<select name="' + name + '">' +
         '<option value="ON"' + (val === 'OFF' ? '' : ' selected') + '>Bật</option>' +
         '<option value="OFF"' + (val === 'OFF' ? ' selected' : '') + '>Tắt</option></select></label>';
     }
-    return '<label class="' + (type === 'url' || name === 'summary' ? 'span2' : '') + '">' + label +
+    if (type === 'select-cat') {
+      var opts = categoryNames().map(function (n) {
+        return '<option value="' + esc(n) + '"' + (val === n ? ' selected' : '') + '>' + esc(n) + '</option>';
+      }).join('');
+      return '<label>' + label + '<select name="' + name + '">' + opts + '</select></label>';
+    }
+    return '<label class="' + (name === 'summary' || type === 'url' ? 'span2' : '') + '">' + label +
       '<input name="' + name + '" type="' + (type === 'url' ? 'url' : type) + '" value="' + esc(val) + '"></label>';
   }
 
-  /* —— POSTS CRUD —— */
   function renderPostsList() {
     setText('#crumb', 'Tin tức & thông báo');
     setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
-    // bootstrap posts are published only; admin needs all — try list via get if we had listAll; use published + note
-    var load = state.isAdmin
-      ? api('bootstrap').then(function (d) {
-          // still published-only from bootstrap; save/list limited — show published + draft via known sample
-          apply(d, true);
-          return state.posts;
-        })
-      : Promise.resolve(state.posts);
-
-    load.then(function (posts) {
-      var rows = (posts || []).map(function (p) {
-        return '<tr>' +
-          '<td><b>' + esc(p.title) + '</b><div class="dim" style="font-size:11px">' + esc(p.category || '') + ' · ' + esc(p.status || '') + '</div></td>' +
+    api('bootstrap').then(function (d) {
+      apply(d, true);
+      var posts = state.posts || [];
+      var rows = posts.map(function (p) {
+        return '<tr><td><b>' + esc(p.title) + '</b><div class="dim" style="font-size:11px">' +
+          esc(p.category || '') + ' · ' + esc(p.status || '') + '</div></td>' +
           '<td class="actions">' +
-          '<button type="button" class="btn btn-sm" data-edit="' + esc(p.postId) + '">Sửa</button> ' +
-          '<button type="button" class="btn btn-sm btn-danger" data-del="' + esc(p.postId) + '">Xóa</button></td></tr>';
+          '<button type="button" class="btn-sm" data-edit="' + esc(p.postId) + '">Sửa</button> ' +
+          '<button type="button" class="btn-sm btn-danger" data-del="' + esc(p.postId) + '">Xóa</button></td></tr>';
       }).join('');
       setHtml('#workMain',
-        '<div class="panel">' +
-        '<div class="toolbar"><h3 style="margin:0">Danh sách bài viết</h3>' +
-        '<button type="button" class="btn btn-primary" id="btnNewPost">+ Viết bài mới</button></div>' +
+        '<div class="panel"><div class="toolbar"><h3 style="margin:0">Bài viết</h3>' +
+        '<button type="button" class="btn btn-primary" id="btnNewPost">+ Viết bài</button></div>' +
         (rows
-          ? '<div class="table-wrap"><table class="table"><thead><tr><th>Bài viết</th><th style="width:140px">Thao tác</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-          : '<div class="empty">Chưa có bài. Bấm “Viết bài mới”.</div>') +
-        '<p class="dim" style="margin-top:12px">Chỉ bài <b>PUBLISHED</b> hiện trên trang công khai. Ảnh: dán link ảnh (Drive/Imgur…). Video: dán link YouTube.</p></div>');
-      var bn = el('btnNewPost');
-      if (bn) bn.onclick = function () { renderPostForm(null); };
+          ? '<div class="table-wrap"><table class="table"><thead><tr><th>Bài</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+          : '<div class="empty">Chưa có bài công khai. Viết bài và chọn PUBLISHED.</div>') +
+        '<p class="dim" style="margin-top:10px">Danh mục nên trùng <b>tên menu trang chủ</b> để lọc đúng khi khách bấm menu.</p></div>');
+      el('btnNewPost').onclick = function () { renderPostForm(null); };
       $$('#workMain [data-edit]').forEach(function (b) {
         b.onclick = function () {
-          var id = b.getAttribute('data-edit');
-          var p = (posts || []).find(function (x) { return x.postId === id; });
-          renderPostForm(p || { postId: id });
+          var p = posts.find(function (x) { return x.postId === b.getAttribute('data-edit'); });
+          renderPostForm(p || { postId: b.getAttribute('data-edit') });
         };
       });
       $$('#workMain [data-del]').forEach(function (b) {
         b.onclick = function () {
-          if (!confirm('Xóa bài viết này?')) return;
+          if (!confirm('Xóa bài này?')) return;
           api('deletePost', { postId: b.getAttribute('data-del') })
-            .then(function () { toast('Đã xóa'); return refreshPosts(); })
-            .then(renderPostsList)
+            .then(function () { toast('Đã xóa'); renderPostsList(); })
             .catch(function (e) { toast(e.message); });
         };
       });
@@ -372,54 +468,42 @@
     });
   }
 
-  function refreshPosts() {
-    return api('bootstrap').then(function (d) {
-      apply(d, true);
-    });
-  }
-
   function renderPostForm(post) {
     post = post || {};
-    state.editingPost = post.postId || null;
-    setText('#crumb', post.postId ? 'Sửa bài viết' : 'Viết bài mới');
+    setText('#crumb', post.postId ? 'Sửa bài' : 'Viết bài mới');
     setHtml('#workMain',
       '<div class="panel"><h3>' + (post.postId ? 'Sửa bài viết' : 'Viết bài mới') + '</h3>' +
       '<form class="form" id="postForm">' +
       '<input type="hidden" name="postId" value="' + esc(post.postId || '') + '">' +
       field('Tiêu đề', 'title', post.title) +
-      field('Danh mục (Thông báo / Hoạt động…)', 'category', post.category || 'Thông báo') +
-      field('Tóm tắt ngắn', 'summary', post.summary) +
-      field('Ảnh đại diện (link ảnh)', 'thumbnailUrl', post.thumbnailUrl, 'url') +
-      field('Ảnh trong bài (link ảnh, tùy chọn)', 'imageUrl', '', 'url') +
-      field('Video YouTube hoặc file .mp4 (link)', 'videoUrl', '', 'url') +
-      field('Nội dung (gõ văn bản, xuống dòng được)', 'bodyText', stripHtml(post.contentHtml), 'textarea') +
+      field('Danh mục / Menu hiển thị', 'category', post.category || categoryNames()[0], 'select-cat') +
+      field('Tóm tắt', 'summary', post.summary) +
+      field('Ảnh đại diện (URL)', 'thumbnailUrl', post.thumbnailUrl, 'url') +
+      field('Ảnh trong bài (URL)', 'imageUrl', '', 'url') +
+      field('Video YouTube hoặc .mp4 (URL)', 'videoUrl', '', 'url') +
+      field('Nội dung', 'bodyText', stripHtml(post.contentHtml), 'textarea') +
       '<label>Trạng thái<select name="status">' +
-      '<option value="DRAFT"' + (post.status === 'PUBLISHED' ? '' : ' selected') + '>Nháp</option>' +
+      '<option value="DRAFT">Nháp</option>' +
       '<option value="PUBLISHED"' + (post.status === 'PUBLISHED' ? ' selected' : '') + '>Công khai</option></select></label>' +
       '<label><span style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="pinned" value="true"' +
-      (String(post.pinned) === 'true' || post.pinned === true ? ' checked' : '') + '> Ghim lên đầu</span></label>' +
-      '<label class="span2 actions-row">' +
-      '<button class="btn btn-primary" type="submit">Lưu bài</button> ' +
+      (post.pinned === true || String(post.pinned) === 'true' ? ' checked' : '') + '> Ghim</span></label>' +
+      '<label class="span2 actions-row"><button class="btn btn-primary" type="submit">Lưu</button> ' +
       '<button class="btn btn-outline" type="button" id="btnCancelPost">Hủy</button></label></form>' +
-      '<p class="dim">Mẹo: tải ảnh lên Google Drive → chia sẻ “bất kỳ ai có link” → dán link trực tiếp vào ô ảnh. Video: dán link YouTube.</p></div>');
-
-    var form = el('postForm');
-    if (form) form.onsubmit = function (e) {
+      '<p class="dim">Chọn danh mục trùng tên menu (vd. “Giới thiệu nhà trường”) để bài hiện trong trang menu đó.</p></div>');
+    el('postForm').onsubmit = function (e) {
       e.preventDefault();
       var fd = Object.fromEntries(new FormData(e.target));
       fd.pinned = !!(e.target.pinned && e.target.pinned.checked);
       fd.contentHtml = buildContentHtml(fd.bodyText, fd.imageUrl, fd.videoUrl);
-      // keep existing html if editing and no new body/media typed empty overwrites - ok
       if (!fd.postId) delete fd.postId;
       delete fd.bodyText; delete fd.imageUrl; delete fd.videoUrl;
       api('savePost', fd).then(function () {
-        toast('Đã lưu bài viết');
-        return refreshPosts();
-      }).then(function () { renderPostsList(); })
+        toast('Đã lưu');
+        return api('bootstrap');
+      }).then(function (d) { apply(d, true); renderPostsList(); })
         .catch(function (err) { toast(err.message); });
     };
-    var cancel = el('btnCancelPost');
-    if (cancel) cancel.onclick = function () { renderPostsList(); };
+    el('btnCancelPost').onclick = function () { renderPostsList(); };
   }
 
   function stripHtml(html) {
@@ -429,7 +513,6 @@
     return (d.textContent || '').trim();
   }
 
-  /* —— APPS CRUD —— */
   function renderAppsCrud() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
     setText('#crumb', 'Ứng dụng');
@@ -437,30 +520,26 @@
     api('listAppsAdmin').then(function (apps) {
       var rows = (apps || []).map(function (a) {
         return '<tr><td><b>' + esc(a.title) + '</b><div class="dim" style="font-size:11px">' + esc(a.url) + '</div></td>' +
-          '<td>' + esc(a.category || '') + '</td>' +
-          '<td class="actions">' +
-          '<button type="button" class="btn btn-sm" data-edit="' + esc(a.appId) + '">Sửa</button> ' +
-          '<button type="button" class="btn btn-sm btn-danger" data-del="' + esc(a.appId) + '">Xóa</button></td></tr>';
+          '<td class="actions"><button type="button" class="btn-sm" data-edit="' + esc(a.appId) + '">Sửa</button> ' +
+          '<button type="button" class="btn-sm btn-danger" data-del="' + esc(a.appId) + '">Xóa</button></td></tr>';
       }).join('');
       setHtml('#workMain',
-        '<div class="panel"><div class="toolbar"><h3 style="margin:0">Ứng dụng trang chủ</h3>' +
+        '<div class="panel"><div class="toolbar"><h3 style="margin:0">Ứng dụng</h3>' +
         '<button type="button" class="btn btn-primary" id="btnNewApp">+ Thêm</button></div>' +
-        '<div class="table-wrap"><table class="table"><thead><tr><th>Ứng dụng</th><th>Nhóm</th><th></th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="3">Chưa có</td></tr>') + '</tbody></table></div>' +
-        '<div id="appFormBox" class="hidden" style="margin-top:16px"></div></div>');
-      el('btnNewApp').onclick = function () { showAppForm(null); };
+        '<div class="table-wrap"><table class="table"><thead><tr><th>Ứng dụng</th><th></th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="2">Chưa có</td></tr>') + '</tbody></table></div>' +
+        '<div id="appFormBox" class="hidden" style="margin-top:14px"></div></div>');
+      el('btnNewApp').onclick = function () { showAppForm(null, apps); };
       $$('#workMain [data-edit]').forEach(function (b) {
         b.onclick = function () {
-          var a = apps.find(function (x) { return x.appId === b.getAttribute('data-edit'); });
-          showAppForm(a);
+          showAppForm(apps.find(function (x) { return x.appId === b.getAttribute('data-edit'); }), apps);
         };
       });
       $$('#workMain [data-del]').forEach(function (b) {
         b.onclick = function () {
-          if (!confirm('Xóa ứng dụng này?')) return;
+          if (!confirm('Xóa?')) return;
           api('deleteApp', { appId: b.getAttribute('data-del') })
-            .then(function () { toast('Đã xóa'); return api('bootstrap'); })
-            .then(function (d) { apply(d, true); renderAppsCrud(); })
+            .then(function () { toast('Đã xóa'); renderAppsCrud(); })
             .catch(function (e) { toast(e.message); });
         };
       });
@@ -474,7 +553,7 @@
     var box = el('appFormBox');
     if (!box) return;
     box.classList.remove('hidden');
-    box.innerHTML = '<h4>' + (app.appId ? 'Sửa ứng dụng' : 'Thêm ứng dụng') + '</h4><form class="form" id="appForm">' +
+    box.innerHTML = '<form class="form" id="appForm">' +
       '<input type="hidden" name="appId" value="' + esc(app.appId || '') + '">' +
       field('Tên', 'title', app.title) + field('URL', 'url', app.url, 'url') +
       field('Nhóm', 'category', app.category || 'Chung') + field('Thứ tự', 'sortOrder', app.sortOrder || 10, 'number') +
@@ -483,47 +562,41 @@
       e.preventDefault();
       var d = Object.fromEntries(new FormData(e.target));
       if (!d.appId) delete d.appId;
-      api('saveApp', d).then(function () {
-        toast('Đã lưu');
-        return api('bootstrap');
-      }).then(function (boot) { apply(boot, true); renderAppsCrud(); })
+      api('saveApp', d).then(function () { toast('Đã lưu'); renderAppsCrud(); })
         .catch(function (err) { toast(err.message); });
     };
   }
 
-  /* —— MENUS HOME only (public) —— */
   function renderMenusCrud() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
     setText('#crumb', 'Menu trang chủ');
     setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
     api('listMenusAdmin').then(function (all) {
-      // chỉ menu HOME — tránh trùng sidebar tools
       var list = (all || []).filter(function (m) {
-        return String(m.location || '').toUpperCase() === 'HOME';
+        return String(m.location || '').toUpperCase() === 'HOME' &&
+          m.menuId !== 'M_HOME' && String(m.title || '').toLowerCase() !== 'trang chủ';
       });
       var rows = list.map(function (m) {
-        return '<tr><td><b>' + esc(m.title) + '</b><div class="dim" style="font-size:11px">' + esc(m.icon) + ' · ' + esc(m.url || '') + '</div></td>' +
-          '<td class="actions">' +
-          '<button type="button" class="btn btn-sm" data-edit="' + esc(m.menuId) + '">Sửa</button> ' +
-          '<button type="button" class="btn btn-sm btn-danger" data-del="' + esc(m.menuId) + '">Xóa</button></td></tr>';
+        return '<tr><td><b>' + esc(m.title) + '</b><div class="dim" style="font-size:11px">' + esc(m.icon) + '</div></td>' +
+          '<td class="actions"><button type="button" class="btn-sm" data-edit="' + esc(m.menuId) + '">Sửa</button> ' +
+          '<button type="button" class="btn-sm btn-danger" data-del="' + esc(m.menuId) + '">Xóa</button></td></tr>';
       }).join('');
       setHtml('#workMain',
-        '<div class="panel"><div class="toolbar"><h3 style="margin:0">Menu trang công khai</h3>' +
-        '<button type="button" class="btn btn-primary" id="btnNewMenu">+ Thêm menu</button></div>' +
-        '<p class="dim">Chỉ hiện trên trang chủ (không cần đăng nhập). Không trùng với menu làm việc bên trái.</p>' +
+        '<div class="panel"><div class="toolbar"><h3 style="margin:0">Menu công khai</h3>' +
+        '<button type="button" class="btn btn-primary" id="btnNewMenu">+ Thêm</button></div>' +
+        '<p class="dim">Tên menu = danh mục bài viết. Không cần mục “Trang chủ” (logo đã về trang chủ).</p>' +
         '<div class="table-wrap"><table class="table"><thead><tr><th>Menu</th><th></th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="2">Chưa có menu HOME — bấm Thêm menu</td></tr>') +
-        '</tbody></table></div><div id="menuFormBox" class="hidden" style="margin-top:16px"></div></div>');
+        (rows || '<tr><td colspan="2">Chưa có</td></tr>') + '</tbody></table></div>' +
+        '<div id="menuFormBox" class="hidden" style="margin-top:14px"></div></div>');
       el('btnNewMenu').onclick = function () { showMenuForm(null); };
       $$('#workMain [data-edit]').forEach(function (b) {
         b.onclick = function () {
-          var m = list.find(function (x) { return x.menuId === b.getAttribute('data-edit'); });
-          showMenuForm(m);
+          showMenuForm(list.find(function (x) { return x.menuId === b.getAttribute('data-edit'); }));
         };
       });
       $$('#workMain [data-del]').forEach(function (b) {
         b.onclick = function () {
-          if (!confirm('Xóa menu này?')) return;
+          if (!confirm('Xóa menu?')) return;
           api('deleteMenu', { menuId: b.getAttribute('data-del') })
             .then(function () { toast('Đã xóa'); renderMenusCrud(); })
             .catch(function (e) { toast(e.message); });
@@ -539,49 +612,48 @@
     var box = el('menuFormBox');
     if (!box) return;
     box.classList.remove('hidden');
-    box.innerHTML = '<h4>' + (m.menuId ? 'Sửa menu' : 'Thêm menu trang chủ') + '</h4><form class="form" id="menuForm">' +
+    box.innerHTML = '<form class="form" id="menuForm">' +
       '<input type="hidden" name="menuId" value="' + esc(m.menuId || '') + '">' +
       '<input type="hidden" name="location" value="HOME">' +
-      field('Tiêu đề', 'title', m.title) +
-      field('Icon (house, newspaper, building, folder, grid, link)', 'icon', m.icon || 'link') +
-      field('URL (để trống nếu chỉ là nhãn)', 'url', m.url || '') +
+      field('Tiêu đề (= danh mục bài viết)', 'title', m.title) +
+      field('Icon', 'icon', m.icon || 'newspaper') +
+      field('URL ngoài (tùy chọn)', 'url', m.url || '') +
       field('Thứ tự', 'sortOrder', m.sortOrder || 10, 'number') +
       field('Trạng thái', 'status', m.status || 'ON', 'select-status') +
-      '<label class="span2"><button class="btn btn-primary" type="submit">Lưu menu</button></label></form>';
+      '<label class="span2"><button class="btn btn-primary" type="submit">Lưu</button></label></form>';
     el('menuForm').onsubmit = function (e) {
       e.preventDefault();
       var d = Object.fromEntries(new FormData(e.target));
       d.location = 'HOME';
       d.menuType = d.url ? 'LINK' : 'GROUP';
-      d.openMode = (String(d.url || '').indexOf('http') === 0) ? 'NEW' : 'SAME';
+      d.openMode = 'SAME';
       if (!d.menuId) delete d.menuId;
       api('saveMenu', d).then(function () {
-        toast('Đã lưu menu');
+        toast('Đã lưu');
         return api('bootstrap');
       }).then(function (boot) { apply(boot, true); renderMenusCrud(); })
         .catch(function (err) { toast(err.message); });
     };
   }
 
-  /* —— USERS —— */
   function renderUsersCrud() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
     setText('#crumb', 'Tài khoản');
     setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
     api('listUsers').then(function (users) {
       var rows = (users || []).map(function (u) {
-        return '<tr><td><b>' + esc(u.username) + '</b></td><td>' + esc(u.fullName) + '</td><td>' + esc(u.groupCode) + '</td><td>' + esc(u.status) + '</td></tr>';
+        return '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.fullName) + '</td><td>' + esc(u.groupCode) + '</td><td>' + esc(u.status) + '</td></tr>';
       }).join('');
       setHtml('#workMain',
         '<div class="panel"><h3>Tài khoản</h3>' +
         '<div class="table-wrap"><table class="table"><thead><tr><th>Username</th><th>Họ tên</th><th>Nhóm</th><th>TT</th></tr></thead><tbody>' +
         rows + '</tbody></table></div>' +
-        '<h4 style="margin-top:18px">Thêm / cập nhật</h4><form class="form" id="userForm">' +
+        '<h4 style="margin-top:16px">Thêm / cập nhật</h4><form class="form" id="userForm">' +
         field('Username', 'username') + field('Họ tên', 'fullName') +
-        field('Mật khẩu (bắt buộc khi tạo mới)', 'password', '', 'password') +
-        field('Nhóm (ADMIN/BGH/GV/VP)', 'groupCode', 'GV') +
+        field('Mật khẩu', 'password', '', 'password') +
+        field('Nhóm', 'groupCode', 'GV') +
         field('Trạng thái', 'status', 'ON', 'select-status') +
-        '<label class="span2"><button class="btn btn-primary" type="submit">Lưu tài khoản</button></label></form></div>');
+        '<label class="span2"><button class="btn btn-primary" type="submit">Lưu</button></label></form></div>');
       el('userForm').onsubmit = function (e) {
         e.preventDefault();
         api('saveUser', Object.fromEntries(new FormData(e.target)))
@@ -595,17 +667,25 @@
 
   function renderConfig() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
-    setText('#crumb', 'Cấu hình');
+    setText('#crumb', 'Cấu hình & ảnh');
     var c = state.config || {};
     setHtml('#workMain',
-      '<div class="panel"><h3>Cấu hình cổng</h3><form class="form" id="cfgForm">' +
+      '<div class="panel"><h3>Thông tin & liên hệ</h3><form class="form" id="cfgForm">' +
       field('Tên trường', 'schoolName', c.schoolName) +
       field('Địa chỉ', 'address', c.address) +
       field('Điện thoại', 'phone', c.phone) +
       field('Email', 'email', c.email) +
-      field('Tiêu đề chào', 'welcomeTitle', c.welcomeTitle) +
-      field('Mô tả', 'welcomeText', c.welcomeText, 'textarea') +
-      '<label class="span2"><button class="btn btn-primary" type="submit">Lưu</button></label></form></div>');
+      field('Tiêu đề hero', 'welcomeTitle', c.welcomeTitle) +
+      field('Mô tả ngắn / giới thiệu', 'welcomeText', c.welcomeText, 'textarea') +
+      field('Đoạn giới thiệu thêm (intro)', 'introHtml', c.introHtml, 'textarea') +
+      '<h3 class="span2" style="grid-column:1/-1;margin:8px 0 0">Hình ảnh trang chủ (URL)</h3>' +
+      field('Banner / nền hero', 'bannerUrl', c.bannerUrl, 'url') +
+      field('Gallery 1', 'gallery1', c.gallery1, 'url') +
+      field('Gallery 2', 'gallery2', c.gallery2, 'url') +
+      field('Gallery 3', 'gallery3', c.gallery3, 'url') +
+      field('Gallery 4', 'gallery4', c.gallery4, 'url') +
+      '<label class="span2"><button class="btn btn-primary" type="submit">Lưu cấu hình</button></label></form>' +
+      '<p class="dim">Dán link ảnh (Drive công khai, Imgur…). Hover ảnh trên trang chủ sẽ phóng nhẹ.</p></div>');
     el('cfgForm').onsubmit = function (e) {
       e.preventDefault();
       var config = Object.fromEntries(new FormData(e.target));
@@ -616,10 +696,10 @@
     };
   }
 
-  /* ===== Auth ===== */
+  /* Auth */
   function openLogin() {
     show('#overlay'); setText('#loginErr', '');
-    setTimeout(function () { var u = el('username'); if (u) u.focus(); }, 30);
+    setTimeout(function () { var u = el('username'); if (u) u.focus(); }, 20);
   }
   function closeLogin() { hide('#overlay'); }
 
@@ -627,7 +707,7 @@
     e.preventDefault();
     setText('#loginErr', '');
     var btn = el('loginBtn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Đang đăng nhập…'; }
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
     api('login', {
       username: ((el('username') && el('username').value) || '').trim(),
       password: (el('password') && el('password').value) || ''
@@ -638,9 +718,7 @@
       closeLogin();
       return api('bootstrap');
     }).then(function (boot) {
-      apply(boot, true);
-      showWork();
-      toast('Đăng nhập thành công');
+      apply(boot, true); showWork(); toast('Đăng nhập thành công');
     }).catch(function (err) {
       setText('#loginErr', err.message);
     }).then(function () {
@@ -658,6 +736,13 @@
 
   function boot() {
     hide('#overlay');
+    // Hiện khung trang chủ ngay (tránh chờ API lâu)
+    show('#publicApp');
+    hide('#workApp');
+    setHtml('#publicMain',
+      '<section class="hero"><div class="hero-content"><div class="badge">Đang tải…</div>' +
+      '<h1>Cổng thông tin trường học</h1><p class="dim">Đang lấy dữ liệu…</p></div></section>');
+
     function startPublic() {
       api('publicBootstrap', {}).then(function (d) {
         apply(d, false); showPublic();
@@ -666,12 +751,13 @@
         state.config = {
           schoolName: 'Cổng thông tin trường học',
           welcomeTitle: 'Cổng thông tin trường học',
-          welcomeText: 'Tin tức, tiện ích và không gian làm việc số.',
+          welcomeText: 'Không gian thông tin nhà trường.',
           address: '', phone: '', email: ''
         };
         showPublic();
       });
     }
+
     if (state.token) {
       api('bootstrap').then(function (d) {
         apply(d, true); showWork();
