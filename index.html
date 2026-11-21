@@ -11,65 +11,77 @@
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div id="app">
-    <!-- Header -->
-    <header class="top">
-      <div class="wrap top-inner">
-        <a class="brand" href="#" id="btnHome">
+  <!-- ========== PUBLIC HOME (không cần đăng nhập) ========== -->
+  <div id="publicApp">
+    <header class="ph">
+      <div class="wrap ph-inner">
+        <a class="brand" href="#" id="pubHome">
           <span class="brand-ico" aria-hidden="true">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3L2 9l10 6 10-6-10-6z" fill="currentColor"/><path d="M2 15l10 6 10-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
           </span>
           <span>
-            <strong id="schoolName">Cổng thông tin trường học</strong>
-            <small>Thông tin · Tiện ích · Làm việc</small>
+            <strong id="pubSchool">Cổng thông tin trường học</strong>
+            <small>Thông tin công khai</small>
           </span>
         </a>
-
-        <nav class="nav" id="nav" aria-label="Menu"></nav>
-
-        <div class="top-right">
+        <nav class="ph-nav" id="homeNav" aria-label="Menu trang chủ"></nav>
+        <div class="ph-actions">
           <button type="button" class="btn btn-outline" id="btnLogin">Đăng nhập</button>
-          <div class="who hidden" id="who">
-            <span class="ava" id="ava">A</span>
-            <span id="whoName">User</span>
-            <button type="button" class="btn btn-text" id="btnLogout">Thoát</button>
-          </div>
-          <button type="button" class="burger" id="burger" aria-label="Menu">☰</button>
+          <button type="button" class="burger" id="pubBurger" aria-label="Menu">☰</button>
         </div>
       </div>
-      <div class="mnav hidden" id="mnav"></div>
+      <div class="ph-mnav hidden" id="homeMnav"></div>
     </header>
 
-    <!-- Main -->
-    <main class="wrap main" id="main">
-      <div class="skeleton" id="boot">
+    <main class="wrap main" id="publicMain">
+      <div class="skeleton" id="bootSk">
         <div class="sk sk-hero"></div>
-        <div class="sk sk-line"></div>
         <div class="sk-row"><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div></div>
       </div>
     </main>
 
-    <!-- Footer -->
     <footer class="foot">
       <div class="wrap foot-grid">
-        <div>
-          <strong id="fName">Cổng thông tin trường học</strong>
-          <p id="fAddr" class="dim">Địa chỉ đơn vị</p>
-        </div>
-        <div>
-          <strong>Liên hệ</strong>
-          <p id="fContact" class="dim">—</p>
-        </div>
-        <div>
-          <strong>Hệ thống</strong>
-          <p class="dim">Phiên bản 1.2 · Nội bộ</p>
-        </div>
+        <div><strong id="fName">Cổng thông tin trường học</strong><p id="fAddr" class="dim">Địa chỉ đơn vị</p></div>
+        <div><strong>Liên hệ</strong><p id="fContact" class="dim">—</p></div>
+        <div><strong>Hệ thống</strong><p class="dim">Cổng thông tin · Nội bộ nhà trường</p></div>
       </div>
     </footer>
   </div>
 
-  <!-- Login modal: ẩn mặc định, không bao giờ che trang chủ khi load -->
-  <div class="overlay hidden" id="overlay" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <!-- ========== WORKSPACE (sau đăng nhập) ========== -->
+  <div id="workApp" class="hidden">
+    <aside class="side" id="side">
+      <div class="side-brand">
+        <span class="brand-ico sm">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3L2 9l10 6 10-6-10-6z" fill="currentColor"/><path d="M2 15l10 6 10-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </span>
+        <div>
+          <b id="sideSchool">Làm việc</b>
+          <small id="sideRole">USER</small>
+        </div>
+      </div>
+      <nav class="side-nav" id="sideNav"></nav>
+      <div class="side-foot">
+        <button type="button" class="btn btn-text full" id="btnBackPublic">← Trang công khai</button>
+      </div>
+    </aside>
+    <div class="work">
+      <header class="work-top">
+        <button type="button" class="burger" id="sideToggle" aria-label="Menu">☰</button>
+        <div class="crumb" id="crumb">Bảng làm việc</div>
+        <div class="who">
+          <span class="ava" id="ava">A</span>
+          <span id="whoName">User</span>
+          <button type="button" class="btn btn-text" id="btnLogout">Thoát</button>
+        </div>
+      </header>
+      <main class="work-main" id="workMain"></main>
+    </div>
+  </div>
+
+  <!-- Login modal -->
+  <div class="overlay hidden" id="overlay">
     <div class="overlay-bg" id="overlayBg"></div>
     <div class="dialog">
       <button type="button" class="x" id="btnCloseLogin" aria-label="Đóng">×</button>
@@ -77,15 +89,11 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3L2 9l10 6 10-6-10-6z" fill="currentColor"/><path d="M2 15l10 6 10-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       </div>
       <p class="eyebrow">Cán bộ · Giáo viên · Nhân viên</p>
-      <h2 id="loginTitle">Đăng nhập</h2>
-      <p class="dim">Tài khoản do nhà trường cấp.</p>
+      <h2>Đăng nhập hệ thống</h2>
+      <p class="dim">Vào khu vực làm việc (sidebar).</p>
       <form id="loginForm">
-        <label>Tên đăng nhập
-          <input id="username" name="username" autocomplete="username" required>
-        </label>
-        <label>Mật khẩu
-          <input id="password" name="password" type="password" autocomplete="current-password" required>
-        </label>
+        <label>Tên đăng nhập<input id="username" autocomplete="username" required></label>
+        <label>Mật khẩu<input id="password" type="password" autocomplete="current-password" required></label>
         <button type="submit" class="btn btn-primary full" id="loginBtn">Đăng nhập</button>
         <p class="err" id="loginErr" role="alert"></p>
       </form>
