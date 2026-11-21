@@ -164,13 +164,13 @@
           '<div class="dialog-ico">🔐</div>' +
           '<p class="eyebrow">XÁC THỰC BẢO MẬT</p>' +
           '<h2 id="freshAuthTitle">' + esc(title || 'Đăng nhập lại') + '</h2>' +
-          '<p class="dim">' + esc(description || 'Vui lòng đăng nhập lại bằng tài khoản ADMIN để tiếp tục.') + '</p>' +
+          '<p class="dim">' + esc(description || 'Đăng nhập bằng tài khoản ADMIN để xác nhận thao tác.') + '</p>' +
           '<form id="freshAuthForm" autocomplete="off">' +
             '<label>Tên đăng nhập<input id="freshAuthUsername" name="username" autocomplete="username" required></label>' +
             '<label>Mật khẩu<input id="freshAuthPassword" name="password" type="password" autocomplete="current-password" required></label>' +
             '<p class="err" id="freshAuthError" role="alert"></p>' +
-            '<button type="submit" class="btn btn-primary full" id="freshAuthSubmit">Đăng nhập và thực hiện</button>' +
-            '<button type="button" class="btn btn-outline full" id="freshAuthCancel">Hủy thao tác</button>' +
+            '<button type="submit" class="btn btn-primary full" id="freshAuthSubmit">Đăng nhập xác nhận</button>' +
+            '<button type="button" class="btn btn-outline full" id="freshAuthCancel">Đóng</button>' +
           '</form></div>';
       document.body.appendChild(wrap);
       var form = document.getElementById('freshAuthForm');
@@ -486,7 +486,6 @@
       '<h1>' + esc(cfg.welcomeTitle || cfg.schoolName || 'Cổng thông tin trường học') + '</h1>' +
       '<p>' + esc(cfg.welcomeText || intro) + '</p>' +
       '<div class="hero-actions">' +
-      '<button type="button" class="btn btn-primary lg" id="heroLogin">Đăng nhập làm việc</button> ' +
       '<a class="btn btn-outline lg" href="#sec-news">Xem tin tức</a></div></div></section>'
     );
 
@@ -544,8 +543,6 @@
     homeSections.forEach(function (section) { parts.push(section.html); });
 
     setHtml('#publicMain', parts.join(''));
-    var hl = el('heroLogin');
-    if (hl) hl.onclick = openLogin;
     bindPostClicks('#publicMain');
     $$('#publicMain .notice-list [data-post]').forEach(function (li) {
       li.style.cursor = 'pointer';
@@ -1088,6 +1085,65 @@
     });
   }
 
+  function buildHomeSortItems(config) {
+    var defs = [
+      { key: 'Intro', label: 'Giới thiệu', fallback: 1 },
+      { key: 'Apps', label: 'Ứng dụng thường dùng', fallback: 2 },
+      { key: 'Gallery', label: 'Hình ảnh nhà trường', fallback: 3 },
+      { key: 'News', label: 'Tin mới nhất', fallback: 4 },
+      { key: 'Notice', label: 'Thông báo', fallback: 5 },
+      { key: 'Contact', label: 'Liên hệ', fallback: 6 }
+    ];
+    defs.sort(function (a, b) {
+      var av = Number(config['homeOrder' + a.key]) || a.fallback;
+      var bv = Number(config['homeOrder' + b.key]) || b.fallback;
+      return av - bv;
+    });
+    return defs.map(function (item, index) {
+      return '<div class="home-sort-item" draggable="true" data-sort-key="' + item.key + '">' +
+        '<span class="home-sort-grip" aria-label="Kéo để sắp xếp">☰</span>' +
+        '<span class="home-sort-name">' + item.label + '</span>' +
+        '<span class="home-sort-number">' + (index + 1) + '</span>' +
+        '<input type="hidden" name="homeOrder' + item.key + '" value="' + (index + 1) + '">' +
+      '</div>';
+    }).join('');
+  }
+
+  function bindHomeSort() {
+    var list = el('homeSortList');
+    if (!list) return;
+    var dragged = null;
+    function renumber() {
+      $$('.home-sort-item', list).forEach(function (item, index) {
+        var number = $('.home-sort-number', item);
+        var input = $('input[type=hidden]', item);
+        if (number) number.textContent = String(index + 1);
+        if (input) input.value = String(index + 1);
+      });
+    }
+    list.addEventListener('dragstart', function (event) {
+      var item = event.target.closest('.home-sort-item');
+      if (!item) return;
+      dragged = item;
+      item.classList.add('is-dragging');
+      if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', item.dataset.sortKey); }
+    });
+    list.addEventListener('dragover', function (event) {
+      event.preventDefault();
+      var target = event.target.closest('.home-sort-item');
+      if (!dragged || !target || target === dragged) return;
+      var rect = target.getBoundingClientRect();
+      var after = event.clientY > rect.top + rect.height / 2;
+      list.insertBefore(dragged, after ? target.nextSibling : target);
+    });
+    list.addEventListener('drop', function (event) { event.preventDefault(); renumber(); });
+    list.addEventListener('dragend', function () {
+      if (dragged) dragged.classList.remove('is-dragging');
+      dragged = null; renumber();
+    });
+    renumber();
+  }
+
   function renderConfig() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
     setText('#crumb', 'Cấu hình & ảnh');
@@ -1127,16 +1183,9 @@
       chk('showNotice', 'Thông báo', cfgOn('showNotice', true)) +
       chk('showContact', 'Liên hệ', cfgOn('showContact', true)) +
       '</div></div>' +
-      '<div class="form-section"><div class="form-section-title">Thứ tự các mục trên trang chủ</div>' +
-      '<p class="config-field-help">Nhập số thứ tự từ 1 đến 6. Số nhỏ hơn sẽ hiển thị trước; có thể đổi số bất cứ lúc nào.</p>' +
-      '<div class="form-grid-2 home-order-grid">' +
-      field('Giới thiệu', 'homeOrderIntro', c.homeOrderIntro || '1', 'number') +
-      field('Ứng dụng thường dùng', 'homeOrderApps', c.homeOrderApps || '2', 'number') +
-      field('Hình ảnh nhà trường', 'homeOrderGallery', c.homeOrderGallery || '3', 'number') +
-      field('Tin mới nhất', 'homeOrderNews', c.homeOrderNews || '4', 'number') +
-      field('Thông báo', 'homeOrderNotice', c.homeOrderNotice || '5', 'number') +
-      field('Liên hệ', 'homeOrderContact', c.homeOrderContact || '6', 'number') +
-      '</div></div>' +
+      '<div class="form-section home-sort-section"><div class="form-section-title">Thứ tự hiển thị trang chủ</div>' +
+      '<p class="config-field-help">Kéo biểu tượng ☰ để sắp xếp. Thứ tự mới sẽ được lưu cùng nút Lưu cấu hình.</p>' +
+      '<div class="home-sort-list" id="homeSortList">' + buildHomeSortItems(c) + '</div></div>' +
       '<div class="form-section"><div class="form-section-title">Số lượng hiển thị</div><div class="form-grid-2">' +
       field('Số ứng dụng', 'homeAppsLimit', c.homeAppsLimit || '12', 'number') +
       field('Số ảnh gallery', 'galleryCount', String(gCount), 'number') +
@@ -1158,6 +1207,7 @@
       '<button type="button" class="btn btn-danger-solid" id="btnDelImages">Xóa ảnh Drive folder</button>' +
       '</div></div></div>');
 
+    bindHomeSort();
     el('cfgForm').onsubmit = function (e) {
       e.preventDefault();
       var fd = new FormData(e.target);
@@ -1186,15 +1236,9 @@
         setText('#logoUpMsg', 'OK — bấm Lưu cấu hình');
       }).catch(function (err) { setText('#logoUpMsg', err.message); });
     };
-    function needAdmin() {
-      if (!state.token || !state.isAdmin) { toast('Vui lòng đăng nhập bằng tài khoản ADMIN trước.'); return false; }
-      return true;
-    }
+    // Mỗi thao tác nguy hiểm mở thẳng form đăng nhập xác nhận; không dùng alert/confirm trung gian.
     el('btnDelPosts').onclick = function () {
-      if (!needAdmin()) return;
-      if (!confirm('CẢNH BÁO: Xóa toàn bộ bài đăng trong hệ thống?')) return;
-      if (!confirm('Đây là thao tác không thể hoàn tác. Bạn có chắc chắn tiếp tục?')) return;
-      confirmAdminReauth('deleteAllPosts', {}, 'Xóa tất cả bài đăng', 'Nhập lại tài khoản và mật khẩu ADMIN. Phiên đăng nhập hiện tại sẽ không được dùng thay cho bước xác thực này.')
+      confirmAdminReauth('deleteAllPosts', {}, 'Xác nhận xóa tất cả bài đăng', 'Đăng nhập bằng tài khoản ADMIN để xác nhận thao tác này.')
         .then(function (r) {
           if (!r) return;
           toast('Đã xóa ' + (r.deleted || 0) + ' bài đăng.');
@@ -1202,9 +1246,7 @@
         }).catch(function (e) { toast(e.message); });
     };
     el('btnDelConfig').onclick = function () {
-      if (!needAdmin()) return;
-      if (!confirm('Khôi phục toàn bộ cấu hình cổng về mặc định?')) return;
-      confirmAdminReauth('resetConfig', {}, 'Khôi phục cấu hình', 'Nhập lại tài khoản và mật khẩu ADMIN để xác nhận khôi phục cấu hình về mặc định.')
+      confirmAdminReauth('resetConfig', {}, 'Xác nhận khôi phục cấu hình', 'Đăng nhập bằng tài khoản ADMIN để xác nhận khôi phục cấu hình mặc định.')
         .then(function (r) {
           if (!r) return;
           toast('Đã khôi phục cấu hình mặc định.');
@@ -1212,10 +1254,7 @@
         }).catch(function (e) { toast(e.message); });
     };
     el('btnDelImages').onclick = function () {
-      if (!needAdmin()) return;
-      if (!confirm('Đưa TẤT CẢ tệp trong thư mục Drive đã cấu hình vào thùng rác?')) return;
-      if (!confirm('Thao tác áp dụng cho toàn bộ tệp trong thư mục. Bạn có chắc chắn?')) return;
-      confirmAdminReauth('deleteAllDriveImages', {}, 'Xóa ảnh trong Google Drive', 'Nhập lại tài khoản và mật khẩu ADMIN. Các tệp sẽ được chuyển vào thùng rác Google Drive.')
+      confirmAdminReauth('deleteAllDriveImages', {}, 'Xác nhận xóa ảnh Drive', 'Đăng nhập bằng tài khoản ADMIN để xác nhận. Tệp sẽ được chuyển vào thùng rác Google Drive.')
         .then(function (r) {
           if (!r) return;
           toast('Đã chuyển ' + (r.deleted || 0) + ' tệp vào thùng rác.');
