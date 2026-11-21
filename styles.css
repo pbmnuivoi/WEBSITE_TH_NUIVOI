@@ -579,3 +579,16 @@ a.card{text-decoration:none}
   .config-text-field{padding:12px}
   .reauth-dialog{padding:22px 18px!important}
 }
+
+
+/* Danh sách kéo thả thứ tự mục trang chủ - gọn, trực quan */
+.home-sort-section{padding-bottom:4px}
+.home-sort-list{display:grid;gap:7px;max-width:720px;margin-top:12px}
+.home-sort-item{display:flex;align-items:center;gap:12px;min-height:44px;padding:7px 12px;border:1px solid #dbe3ee;border-radius:9px;background:#fff;cursor:grab;user-select:none;box-sizing:border-box;transition:border-color .15s,background .15s,opacity .15s}
+.home-sort-item:hover{border-color:#93b4df;background:#f8fbff}
+.home-sort-item:active{cursor:grabbing}
+.home-sort-item.is-dragging{opacity:.45;border:1px dashed var(--p);background:#eff6ff}
+.home-sort-grip{color:#94a3b8;font-size:17px;line-height:1;letter-spacing:-2px;cursor:grab}
+.home-sort-name{flex:1;min-width:0;font-size:13px;font-weight:700;color:#26364b}
+.home-sort-number{display:grid;place-items:center;width:26px;height:26px;border-radius:7px;background:#edf3fb;color:var(--p);font-size:12px;font-weight:800}
+@media(max-width:600px){.home-sort-list{max-width:none}.home-sort-item{min-height:46px}}
