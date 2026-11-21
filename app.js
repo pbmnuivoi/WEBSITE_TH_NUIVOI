@@ -131,6 +131,81 @@
     });
   }
 
+  // Gọi API bằng token vừa xác thực lại; không thay đổi phiên đăng nhập hiện tại.
+  function apiWithToken(action, data, token) {
+    var url = window.APP_CONFIG && window.APP_CONFIG.API_URL;
+    if (!url) return Promise.reject(new Error('Chưa cấu hình API_URL'));
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: action, data: Object.assign({}, data || {}, { token: token }) })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) throw new Error(j.error || 'Lỗi API');
+      return j.data;
+    });
+  }
+
+  // Hộp đăng nhập lại độc lập: bắt buộc nhập cả tài khoản và mật khẩu,
+  // xác thực tại GAS, sau đó dùng token mới chỉ cho đúng thao tác nguy hiểm.
+  function confirmAdminReauth(action, data, title, description) {
+    return new Promise(function (resolve, reject) {
+      var old = document.getElementById('freshAuthDialog');
+      if (old) old.remove();
+      var wrap = document.createElement('div');
+      wrap.id = 'freshAuthDialog';
+      wrap.className = 'fresh-auth-backdrop';
+      wrap.innerHTML = '<div class="fresh-auth-card" role="dialog" aria-modal="true" aria-labelledby="freshAuthTitle">' +
+        '<div class="fresh-auth-head"><span class="fresh-auth-icon">🔐</span><div><h3 id="freshAuthTitle">' + esc(title || 'Xác thực quản trị lại') + '</h3><p>Thao tác nhạy cảm cần đăng nhập lại</p></div></div>' +
+        '<div class="fresh-auth-warning">' + esc(description || 'Vui lòng xác thực lại tài khoản quản trị để tiếp tục.') + '</div>' +
+        '<form id="freshAuthForm" autocomplete="off">' +
+        '<label>Tên đăng nhập<input id="freshAuthUsername" name="username" type="text" autocomplete="username" required></label>' +
+        '<label>Mật khẩu quản trị<input id="freshAuthPassword" name="password" type="password" autocomplete="current-password" required></label>' +
+        '<div id="freshAuthError" class="fresh-auth-error" role="alert"></div>' +
+        '<div class="fresh-auth-actions"><button type="button" class="btn btn-outline" id="freshAuthCancel">Hủy</button>' +
+        '<button type="submit" class="btn btn-danger-solid" id="freshAuthSubmit">Đăng nhập và thực hiện</button></div></form></div>';
+      document.body.appendChild(wrap);
+      var form = document.getElementById('freshAuthForm');
+      var username = document.getElementById('freshAuthUsername');
+      var password = document.getElementById('freshAuthPassword');
+      var submit = document.getElementById('freshAuthSubmit');
+      var error = document.getElementById('freshAuthError');
+      var finished = false;
+      function close(value) {
+        if (finished) return;
+        finished = true;
+        wrap.remove();
+        resolve(value);
+      }
+      document.getElementById('freshAuthCancel').onclick = function () { close(null); };
+      wrap.addEventListener('click', function (ev) { if (ev.target === wrap) close(null); });
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        error.textContent = '';
+        submit.disabled = true; submit.textContent = 'Đang xác thực…';
+        var loginUrl = window.APP_CONFIG && window.APP_CONFIG.API_URL;
+        fetch(loginUrl, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'login', data: { username: username.value.trim(), password: password.value } })
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          if (!j.ok) throw new Error(j.error || 'Đăng nhập không thành công.');
+          if (!j.data || !j.data.user || j.data.user.groupCode !== 'ADMIN') {
+            throw new Error('Tài khoản vừa nhập không có quyền ADMIN.');
+          }
+          return apiWithToken(action, data || {}, j.data.token);
+        }).then(function (result) {
+          password.value = '';
+          close(result);
+        }).catch(function (err) {
+          error.textContent = err.message || 'Không thể xác thực.';
+          password.value = '';
+          submit.disabled = false; submit.textContent = 'Đăng nhập và thực hiện';
+          password.focus();
+        });
+      });
+      setTimeout(function () { username.focus(); }, 30);
+    });
+  }
+
   function apply(d, withUser) {
     state.config = d.config || {};
     state.menus = (d.menus || []).filter(function (m) { return String(m.status) !== 'OFF'; });
@@ -539,11 +614,7 @@
     val = val == null ? '' : val;
     type = type || 'text';
     if (type === 'textarea') {
-      var rows = name === 'introHtml' ? 8 : 6;
-      return '<label class="span2 config-textarea-field">' + label +
-        '<textarea name="' + name + '" rows="' + rows + '" placeholder="' +
-        (name === 'welcomeText' ? 'Nhập mô tả ngắn về nhà trường...' : 'Nhập nội dung giới thiệu chi tiết...') +
-        '">' + esc(val) + '</textarea></label>';
+      return '<label class="span2">' + label + '<textarea name="' + name + '" rows="4">' + esc(val) + '</textarea></label>';
     }
     if (type === 'select-status') {
       return '<label>' + label + '<select name="' + name + '">' +
@@ -987,8 +1058,15 @@
       field('Điện thoại', 'phone', c.phone) +
       field('Email', 'email', c.email) +
       field('Tiêu đề hero', 'welcomeTitle', c.welcomeTitle) +
-      '</div>' + field('Mô tả ngắn', 'welcomeText', c.welcomeText, 'textarea') +
-      field('Giới thiệu thêm', 'introHtml', c.introHtml, 'textarea') + '</div>' +
+      '</div>' +
+      '<div class="config-text-fields">' +
+      '<div class="config-text-field"><label for="cfgWelcomeText">Mô tả ngắn trên trang chủ</label>' +
+      '<p class="config-field-help">Một đến vài câu giới thiệu ngắn, hiển thị ngay dưới tên trường ở phần đầu trang chủ.</p>' +
+      '<textarea id="cfgWelcomeText" name="welcomeText" rows="5" placeholder="Ví dụ: Chào mừng quý phụ huynh, học sinh và thầy cô đến với Cổng thông tin Trường…">' + esc(c.welcomeText || '') + '</textarea></div>' +
+      '<div class="config-text-field"><label for="cfgIntroHtml">Nội dung giới thiệu thêm</label>' +
+      '<p class="config-field-help">Nhập nội dung giới thiệu chi tiết về nhà trường. Có thể xuống dòng và chia thành nhiều đoạn.</p>' +
+      '<textarea id="cfgIntroHtml" name="introHtml" rows="9" placeholder="Giới thiệu lịch sử hình thành, sứ mệnh, hoạt động và những thông tin nổi bật của nhà trường…">' + esc(c.introHtml || '') + '</textarea></div>' +
+      '</div></div>' +
       '<div class="form-section"><div class="form-section-title">Hiển thị trang chủ</div><div class="switch-grid">' +
       chk('showIntro', 'Giới thiệu', cfgOn('showIntro', true)) +
       chk('showApps', 'Ứng dụng thường dùng', cfgOn('showApps', true)) +
@@ -1046,63 +1124,39 @@
       }).catch(function (err) { setText('#logoUpMsg', err.message); });
     };
     function needAdmin() {
-      if (!state.token || !state.isAdmin || !state.user) { toast('Cần đăng nhập admin'); return false; }
+      if (!state.token || !state.isAdmin) { toast('Vui lòng đăng nhập bằng tài khoản ADMIN trước.'); return false; }
       return true;
-    }
-    function reauthenticateAdmin() {
-      if (!needAdmin()) return Promise.resolve(false);
-      var password = window.prompt('Để tiếp tục thao tác quản trị, vui lòng nhập lại mật khẩu tài khoản ' +
-        (state.user.username || 'admin') + ':');
-      if (password === null) return Promise.resolve(false);
-      if (!password) { toast('Bạn chưa nhập mật khẩu.'); return Promise.resolve(false); }
-      return api('login', { username: state.user.username, password: password }).then(function (login) {
-        if (!login.user || login.user.groupCode !== 'ADMIN') {
-          toast('Tài khoản không có quyền quản trị.');
-          return false;
-        }
-        state.token = login.token;
-        state.user = login.user;
-        state.isAdmin = true;
-        sessionStorage.setItem('school_token', login.token);
-        return true;
-      }).catch(function (err) {
-        toast('Xác thực lại thất bại: ' + err.message);
-        return false;
-      });
     }
     el('btnDelPosts').onclick = function () {
       if (!needAdmin()) return;
-      if (!confirm('XÓA TẤT CẢ bài đăng? Thao tác này không thể hoàn tác.')) return;
-      if (!confirm('Bạn chắc chắn muốn xóa toàn bộ bài đăng?')) return;
-      reauthenticateAdmin().then(function (ok) {
-        if (!ok) return;
-        return api('deleteAllPosts', {}).then(function (r) {
-          toast('Đã xóa ' + (r.deleted || 0) + ' bài');
-          return api('bootstrap');
-        }).then(function (d) { if (d) apply(d, true); });
-      }).catch(function (e) { toast(e.message); });
+      if (!confirm('CẢNH BÁO: Xóa toàn bộ bài đăng trong hệ thống?')) return;
+      if (!confirm('Đây là thao tác không thể hoàn tác. Bạn có chắc chắn tiếp tục?')) return;
+      confirmAdminReauth('deleteAllPosts', {}, 'Xóa tất cả bài đăng', 'Nhập lại tài khoản và mật khẩu ADMIN. Phiên đăng nhập hiện tại sẽ không được dùng thay cho bước xác thực này.')
+        .then(function (r) {
+          if (!r) return;
+          toast('Đã xóa ' + (r.deleted || 0) + ' bài đăng.');
+          return api('bootstrap').then(function (d) { apply(d, true); renderConfig(); });
+        }).catch(function (e) { toast(e.message); });
     };
     el('btnDelConfig').onclick = function () {
       if (!needAdmin()) return;
-      if (!confirm('Reset toàn bộ cấu hình cổng về mặc định?')) return;
-      reauthenticateAdmin().then(function (ok) {
-        if (!ok) return;
-        return api('resetConfig', {}).then(function () {
-          toast('Đã khôi phục cấu hình mặc định');
-          return api('bootstrap');
-        }).then(function (d) { if (d) { apply(d, true); renderConfig(); } });
-      }).catch(function (e) { toast(e.message); });
+      if (!confirm('Khôi phục toàn bộ cấu hình cổng về mặc định?')) return;
+      confirmAdminReauth('resetConfig', {}, 'Khôi phục cấu hình', 'Nhập lại tài khoản và mật khẩu ADMIN để xác nhận khôi phục cấu hình về mặc định.')
+        .then(function (r) {
+          if (!r) return;
+          toast('Đã khôi phục cấu hình mặc định.');
+          return api('bootstrap').then(function (d) { apply(d, true); renderConfig(); });
+        }).catch(function (e) { toast(e.message); });
     };
     el('btnDelImages').onclick = function () {
       if (!needAdmin()) return;
-      if (!confirm('Đưa TẤT CẢ file trong thư mục Drive ảnh vào thùng rác?')) return;
-      if (!confirm('Xác nhận xóa toàn bộ ảnh trong thư mục Drive?')) return;
-      reauthenticateAdmin().then(function (ok) {
-        if (!ok) return;
-        return api('deleteAllDriveImages', {}).then(function (r) {
-          toast('Đã đưa ' + (r.deleted || 0) + ' file vào thùng rác');
-        });
-      }).catch(function (e) { toast(e.message); });
+      if (!confirm('Đưa TẤT CẢ tệp trong thư mục Drive đã cấu hình vào thùng rác?')) return;
+      if (!confirm('Thao tác áp dụng cho toàn bộ tệp trong thư mục. Bạn có chắc chắn?')) return;
+      confirmAdminReauth('deleteAllDriveImages', {}, 'Xóa ảnh trong Google Drive', 'Nhập lại tài khoản và mật khẩu ADMIN. Các tệp sẽ được chuyển vào thùng rác Google Drive.')
+        .then(function (r) {
+          if (!r) return;
+          toast('Đã chuyển ' + (r.deleted || 0) + ' tệp vào thùng rác.');
+        }).catch(function (e) { toast(e.message); });
     };
   }
 
