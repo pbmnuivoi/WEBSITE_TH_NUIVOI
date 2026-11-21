@@ -487,3 +487,95 @@ a.card{text-decoration:none}
 .fresh-auth-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:2px}
 .fresh-auth-actions button{min-height:40px}
 @media(max-width:600px){.fresh-auth-card{padding:18px}.fresh-auth-actions{flex-direction:column-reverse}.fresh-auth-actions button{width:100%;justify-content:center}}
+
+
+/* Cấu hình: vùng nhập nội dung thân thiện, đồng bộ kiểu nhập bài viết */
+.config-text-fields{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:18px;
+  width:100%;
+  margin:18px 0 10px;
+}
+.config-text-field{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:8px;
+  width:100%;
+  min-width:0;
+  padding:16px;
+  box-sizing:border-box;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+}
+.config-text-field textarea{
+  display:block!important;
+  width:100%!important;
+  min-height:150px!important;
+  box-sizing:border-box!important;
+  padding:12px 14px!important;
+  border:1px solid #d5deea!important;
+  border-radius:10px!important;
+  background:#fff!important;
+  color:#0f172a!important;
+  font:inherit!important;
+  font-size:14px!important;
+  line-height:1.65!important;
+  resize:vertical!important;
+}
+.config-text-field textarea#cfgIntroHtml{min-height:250px!important}
+.config-text-field textarea:focus{
+  outline:none;
+  border-color:var(--p)!important;
+  box-shadow:0 0 0 3px rgba(30,74,140,.12)!important;
+}
+.home-order-grid input[type="number"]{max-width:180px}
+.reauth-overlay{
+  position:fixed!important;
+  inset:0!important;
+  z-index:20000!important;
+  display:grid!important;
+  place-items:center!important;
+  padding:16px!important;
+  box-sizing:border-box!important;
+  background:rgba(15,23,42,.58)!important;
+  overflow-y:auto!important;
+}
+.reauth-overlay .overlay-bg{
+  position:absolute!important;
+  inset:0!important;
+  background:rgba(15,23,42,.58)!important;
+}
+.reauth-dialog{
+  position:relative!important;
+  z-index:1!important;
+  width:min(420px,100%)!important;
+  max-height:calc(100vh - 32px)!important;
+  overflow-y:auto!important;
+  margin:auto!important;
+  box-sizing:border-box!important;
+}
+.reauth-dialog .dialog-ico{
+  display:grid;
+  place-items:center;
+  font-size:22px;
+}
+.reauth-dialog form{display:grid;gap:8px}
+.reauth-dialog form label{
+  display:grid;
+  gap:5px;
+  margin-top:8px;
+  font-size:13px;
+  font-weight:700;
+}
+.reauth-dialog form input{
+  width:100%;
+  min-height:43px;
+  box-sizing:border-box;
+}
+.reauth-dialog form .btn.full{width:100%;margin-top:8px}
+@media(max-width:600px){
+  .config-text-field{padding:12px}
+  .reauth-dialog{padding:22px 18px!important}
+}
