@@ -147,22 +147,31 @@
 
   // Hộp đăng nhập lại độc lập: bắt buộc nhập cả tài khoản và mật khẩu,
   // xác thực tại GAS, sau đó dùng token mới chỉ cho đúng thao tác nguy hiểm.
+  // Đăng nhập lại bằng giao diện cùng kiểu với form đăng nhập ban đầu.
+  // Token xác thực mới chỉ được dùng cho đúng thao tác nhạy cảm, không thay phiên hiện tại.
   function confirmAdminReauth(action, data, title, description) {
-    return new Promise(function (resolve, reject) {
+    return new Promise(function (resolve) {
       var old = document.getElementById('freshAuthDialog');
       if (old) old.remove();
       var wrap = document.createElement('div');
       wrap.id = 'freshAuthDialog';
-      wrap.className = 'fresh-auth-backdrop';
-      wrap.innerHTML = '<div class="fresh-auth-card" role="dialog" aria-modal="true" aria-labelledby="freshAuthTitle">' +
-        '<div class="fresh-auth-head"><span class="fresh-auth-icon">🔐</span><div><h3 id="freshAuthTitle">' + esc(title || 'Xác thực quản trị lại') + '</h3><p>Thao tác nhạy cảm cần đăng nhập lại</p></div></div>' +
-        '<div class="fresh-auth-warning">' + esc(description || 'Vui lòng xác thực lại tài khoản quản trị để tiếp tục.') + '</div>' +
-        '<form id="freshAuthForm" autocomplete="off">' +
-        '<label>Tên đăng nhập<input id="freshAuthUsername" name="username" type="text" autocomplete="username" required></label>' +
-        '<label>Mật khẩu quản trị<input id="freshAuthPassword" name="password" type="password" autocomplete="current-password" required></label>' +
-        '<div id="freshAuthError" class="fresh-auth-error" role="alert"></div>' +
-        '<div class="fresh-auth-actions"><button type="button" class="btn btn-outline" id="freshAuthCancel">Hủy</button>' +
-        '<button type="submit" class="btn btn-danger-solid" id="freshAuthSubmit">Đăng nhập và thực hiện</button></div></form></div>';
+      wrap.className = 'overlay reauth-overlay';
+      wrap.style.zIndex = '20000';
+      wrap.innerHTML =
+        '<div class="overlay-bg" id="freshAuthBg"></div>' +
+        '<div class="dialog reauth-dialog" role="dialog" aria-modal="true" aria-labelledby="freshAuthTitle">' +
+          '<button type="button" class="x" id="freshAuthClose" aria-label="Đóng">×</button>' +
+          '<div class="dialog-ico">🔐</div>' +
+          '<p class="eyebrow">XÁC THỰC BẢO MẬT</p>' +
+          '<h2 id="freshAuthTitle">' + esc(title || 'Đăng nhập lại') + '</h2>' +
+          '<p class="dim">' + esc(description || 'Vui lòng đăng nhập lại bằng tài khoản ADMIN để tiếp tục.') + '</p>' +
+          '<form id="freshAuthForm" autocomplete="off">' +
+            '<label>Tên đăng nhập<input id="freshAuthUsername" name="username" autocomplete="username" required></label>' +
+            '<label>Mật khẩu<input id="freshAuthPassword" name="password" type="password" autocomplete="current-password" required></label>' +
+            '<p class="err" id="freshAuthError" role="alert"></p>' +
+            '<button type="submit" class="btn btn-primary full" id="freshAuthSubmit">Đăng nhập và thực hiện</button>' +
+            '<button type="button" class="btn btn-outline full" id="freshAuthCancel">Hủy thao tác</button>' +
+          '</form></div>';
       document.body.appendChild(wrap);
       var form = document.getElementById('freshAuthForm');
       var username = document.getElementById('freshAuthUsername');
@@ -177,32 +186,57 @@
         resolve(value);
       }
       document.getElementById('freshAuthCancel').onclick = function () { close(null); };
-      wrap.addEventListener('click', function (ev) { if (ev.target === wrap) close(null); });
+      document.getElementById('freshAuthClose').onclick = function () { close(null); };
+      document.getElementById('freshAuthBg').onclick = function () { close(null); };
       form.addEventListener('submit', function (ev) {
         ev.preventDefault();
         error.textContent = '';
-        submit.disabled = true; submit.textContent = 'Đang xác thực…';
+        submit.disabled = true;
+        submit.textContent = 'Đang xác thực…';
         var loginUrl = window.APP_CONFIG && window.APP_CONFIG.API_URL;
+        if (!loginUrl) {
+          error.textContent = 'Chưa cấu hình địa chỉ API.';
+          submit.disabled = false;
+          submit.textContent = 'Đăng nhập và thực hiện';
+          return;
+        }
         fetch(loginUrl, {
-          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'login', data: { username: username.value.trim(), password: password.value } })
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'login',
+            data: { username: username.value.trim(), password: password.value }
+          })
         }).then(function (r) { return r.json(); }).then(function (j) {
-          if (!j.ok) throw new Error(j.error || 'Đăng nhập không thành công.');
+          if (!j.ok) throw new Error(j.error || 'Tên đăng nhập hoặc mật khẩu không đúng.');
           if (!j.data || !j.data.user || j.data.user.groupCode !== 'ADMIN') {
             throw new Error('Tài khoản vừa nhập không có quyền ADMIN.');
           }
-          return apiWithToken(action, data || {}, j.data.token);
+          var freshToken = j.data.token;
+          function revokeFreshToken() {
+            return fetch(loginUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify({ action: 'logout', data: { token: freshToken } })
+            }).catch(function () {});
+          }
+          return apiWithToken(action, data || {}, freshToken).then(function (result) {
+            return revokeFreshToken().then(function () { return result; });
+          }, function (actionError) {
+            return revokeFreshToken().then(function () { throw actionError; });
+          });
         }).then(function (result) {
           password.value = '';
           close(result);
         }).catch(function (err) {
           error.textContent = err.message || 'Không thể xác thực.';
           password.value = '';
-          submit.disabled = false; submit.textContent = 'Đăng nhập và thực hiện';
+          submit.disabled = false;
+          submit.textContent = 'Đăng nhập và thực hiện';
           password.focus();
         });
       });
-      setTimeout(function () { username.focus(); }, 30);
+      setTimeout(function () { username.focus(); }, 50);
     });
   }
 
@@ -455,10 +489,19 @@
       '<button type="button" class="btn btn-primary lg" id="heroLogin">Đăng nhập làm việc</button> ' +
       '<a class="btn btn-outline lg" href="#sec-news">Xem tin tức</a></div></div></section>'
     );
+
+    // Các mục nội dung được sắp xếp theo số thứ tự do quản trị viên cấu hình.
+    var homeSections = [];
+    function addHomeSection(key, html) {
+      var orderValue = Number(cfg['homeOrder' + key.charAt(0).toUpperCase() + key.slice(1)]);
+      homeSections.push({ key: key, order: orderValue > 0 ? orderValue : ({
+        intro: 1, apps: 2, gallery: 3, news: 4, notice: 5, contact: 6
+      })[key], html: html });
+    }
     if (cfgOn('showIntro', true)) {
-      parts.push(
+      addHomeSection('intro',
         '<section class="sec" id="sec-intro"><div class="sec-h"><h2>Giới thiệu</h2></div>' +
-        '<div class="panel intro-box"><p>' + esc(intro) + '</p>' +
+        '<div class="panel intro-box"><p>' + esc(intro).replace(/\r?\n/g, '<br>') + '</p>' +
         (cfg.address || cfg.phone || cfg.email
           ? '<p class="dim" style="margin-top:12px">' +
             [cfg.address, cfg.phone && ('ĐT: ' + cfg.phone), cfg.email].filter(Boolean).join(' · ') + '</p>'
@@ -467,20 +510,24 @@
       );
     }
     if (cfgOn('showApps', true) && appHtml) {
-      parts.push('<section class="sec"><div class="sec-h"><h2>Ứng dụng thường dùng</h2></div><div class="grid">' + appHtml + '</div></section>');
+      addHomeSection('apps',
+        '<section class="sec"><div class="sec-h"><h2>Ứng dụng thường dùng</h2></div><div class="grid">' + appHtml + '</div></section>'
+      );
     }
-    if (cfgOn('showGallery', true) && galleryHtml) parts.push(galleryHtml);
+    if (cfgOn('showGallery', true) && galleryHtml) addHomeSection('gallery', galleryHtml);
     if (cfgOn('showNews', true)) {
-      parts.push('<section class="sec" id="sec-news"><div class="sec-h"><h2>Tin mới nhất</h2></div>' + newsHtml + '</section>');
+      addHomeSection('news',
+        '<section class="sec" id="sec-news"><div class="sec-h"><h2>Tin mới nhất</h2></div>' + newsHtml + '</section>'
+      );
     }
     if (cfgOn('showNotice', true)) {
-      parts.push(
+      addHomeSection('notice',
         '<section class="sec" id="sec-notice"><div class="sec-h"><h2>Thông báo</h2></div>' +
         '<div class="panel">' + noticeHtml + '</div></section>'
       );
     }
     if (cfgOn('showContact', true)) {
-      parts.push(
+      addHomeSection('contact',
         '<section class="sec" id="sec-contact"><div class="sec-h"><h2>Liên hệ</h2></div>' +
         '<div class="panel contact-grid">' +
         '<div><b>Đơn vị</b><p class="dim">' + esc(cfg.schoolName || '—') + '</p></div>' +
@@ -490,6 +537,11 @@
         '</div></section>'
       );
     }
+    homeSections.sort(function (a, b) {
+      return a.order - b.order || ['intro','apps','gallery','news','notice','contact'].indexOf(a.key) -
+        ['intro','apps','gallery','news','notice','contact'].indexOf(b.key);
+    });
+    homeSections.forEach(function (section) { parts.push(section.html); });
 
     setHtml('#publicMain', parts.join(''));
     var hl = el('heroLogin');
@@ -1061,11 +1113,11 @@
       '</div>' +
       '<div class="config-text-fields">' +
       '<div class="config-text-field"><label for="cfgWelcomeText">Mô tả ngắn trên trang chủ</label>' +
-      '<p class="config-field-help">Một đến vài câu giới thiệu ngắn, hiển thị ngay dưới tên trường ở phần đầu trang chủ.</p>' +
-      '<textarea id="cfgWelcomeText" name="welcomeText" rows="5" placeholder="Ví dụ: Chào mừng quý phụ huynh, học sinh và thầy cô đến với Cổng thông tin Trường…">' + esc(c.welcomeText || '') + '</textarea></div>' +
-      '<div class="config-text-field"><label for="cfgIntroHtml">Nội dung giới thiệu thêm</label>' +
-      '<p class="config-field-help">Nhập nội dung giới thiệu chi tiết về nhà trường. Có thể xuống dòng và chia thành nhiều đoạn.</p>' +
-      '<textarea id="cfgIntroHtml" name="introHtml" rows="9" placeholder="Giới thiệu lịch sử hình thành, sứ mệnh, hoạt động và những thông tin nổi bật của nhà trường…">' + esc(c.introHtml || '') + '</textarea></div>' +
+      '<p class="config-field-help">Nhập vài câu giới thiệu ngắn. Khung nhập được trình bày giống phần nhập nội dung bài viết.</p>' +
+      '<textarea id="cfgWelcomeText" name="welcomeText" rows="6" placeholder="Nhập mô tả ngắn về nhà trường…">' + esc(c.welcomeText || '') + '</textarea></div>' +
+      '<div class="config-text-field"><label for="cfgIntroHtml">Giới thiệu thêm</label>' +
+      '<p class="config-field-help">Nhập nội dung giới thiệu chi tiết. Có thể xuống dòng, chia đoạn và chỉnh chiều cao khung nhập.</p>' +
+      '<textarea id="cfgIntroHtml" name="introHtml" rows="10" placeholder="Nhập nội dung giới thiệu chi tiết về nhà trường…">' + esc(c.introHtml || '') + '</textarea></div>' +
       '</div></div>' +
       '<div class="form-section"><div class="form-section-title">Hiển thị trang chủ</div><div class="switch-grid">' +
       chk('showIntro', 'Giới thiệu', cfgOn('showIntro', true)) +
@@ -1074,6 +1126,16 @@
       chk('showNews', 'Tin mới nhất', cfgOn('showNews', true)) +
       chk('showNotice', 'Thông báo', cfgOn('showNotice', true)) +
       chk('showContact', 'Liên hệ', cfgOn('showContact', true)) +
+      '</div></div>' +
+      '<div class="form-section"><div class="form-section-title">Thứ tự các mục trên trang chủ</div>' +
+      '<p class="config-field-help">Nhập số thứ tự từ 1 đến 6. Số nhỏ hơn sẽ hiển thị trước; có thể đổi số bất cứ lúc nào.</p>' +
+      '<div class="form-grid-2 home-order-grid">' +
+      field('Giới thiệu', 'homeOrderIntro', c.homeOrderIntro || '1', 'number') +
+      field('Ứng dụng thường dùng', 'homeOrderApps', c.homeOrderApps || '2', 'number') +
+      field('Hình ảnh nhà trường', 'homeOrderGallery', c.homeOrderGallery || '3', 'number') +
+      field('Tin mới nhất', 'homeOrderNews', c.homeOrderNews || '4', 'number') +
+      field('Thông báo', 'homeOrderNotice', c.homeOrderNotice || '5', 'number') +
+      field('Liên hệ', 'homeOrderContact', c.homeOrderContact || '6', 'number') +
       '</div></div>' +
       '<div class="form-section"><div class="form-section-title">Số lượng hiển thị</div><div class="form-grid-2">' +
       field('Số ứng dụng', 'homeAppsLimit', c.homeAppsLimit || '12', 'number') +
@@ -1101,7 +1163,8 @@
       var fd = new FormData(e.target);
       var config = {};
       ['schoolName','logoUrl','address','phone','email','welcomeTitle','welcomeText','introHtml',
-        'homeAppsLimit','galleryCount','homeNewsLimit','homeNoticeLimit','homePostLimit','driveFolderId','bannerUrl'
+        'homeAppsLimit','galleryCount','homeNewsLimit','homeNoticeLimit','homePostLimit','driveFolderId','bannerUrl',
+        'homeOrderIntro','homeOrderApps','homeOrderGallery','homeOrderNews','homeOrderNotice','homeOrderContact'
       ].forEach(function (k) { if (fd.has(k)) config[k] = fd.get(k); });
       for (var i = 1; i <= 12; i++) if (fd.has('gallery' + i)) config['gallery' + i] = fd.get('gallery' + i);
       ['showIntro','showApps','showGallery','showNews','showNotice','showContact'].forEach(function (k) {
