@@ -30,6 +30,15 @@
   };
 
   function icon(n) { return ICONS[n] || ICONS[String(n || '').toLowerCase()] || '•'; }
+  function cfgOn(key, defYes) {
+    var v = state.config && state.config[key];
+    if (v === undefined || v === null || v === '') return defYes !== false;
+    return !(String(v) === '0' || String(v).toLowerCase() === 'false' || String(v) === 'OFF');
+  }
+  function cfgNum(key, def) {
+    var n = Number(state.config && state.config[key]);
+    return (isFinite(n) && n > 0) ? n : def;
+  }
   function color(seed) {
     var c = ['#1e4a8c', '#0f766e', '#b45309', '#6d28d9', '#be123c', '#0369a1', '#15803d', '#c2410c'];
     var h = 0, s = String(seed || 'A'), i;
@@ -307,23 +316,28 @@
     var news = posts.filter(function (p) {
       var c = String(p.category || '').toLowerCase();
       return c.indexOf('thông báo') < 0 && c.indexOf('thong bao') < 0;
-    }).slice(0, 6);
+    });
     var notices = posts.filter(function (p) {
       var c = String(p.category || '').toLowerCase();
       return c.indexOf('thông báo') >= 0 || c.indexOf('thong bao') >= 0;
-    }).slice(0, 5);
-    if (!news.length && posts.length) news = posts.slice(0, 6);
-    if (!notices.length && posts.length) notices = posts.slice(0, 3);
+    });
+    if (!news.length && posts.length) news = posts.slice(0);
 
-    var maxG = Math.max(1, Math.min(12, Number(cfg.galleryCount || 4) || 4));
+    var maxApps = cfgNum('homeAppsLimit', 12);
+    var maxGal = cfgNum('galleryCount', 4);
+    var maxNews = cfgNum('homeNewsLimit', 6);
+    var maxNotice = cfgNum('homeNoticeLimit', 5);
+
     var gallery = [];
-    for (var gi = 1; gi <= maxG; gi++) {
+    for (var gi = 1; gi <= 12; gi++) {
       if (cfg['gallery' + gi]) gallery.push(cfg['gallery' + gi]);
     }
+    gallery = gallery.slice(0, maxGal);
     if (!gallery.length && cfg.bannerUrl) gallery = [cfg.bannerUrl];
 
-    var appHtml = state.apps.length
-      ? state.apps.map(function (a) {
+    var appsShow = (state.apps || []).slice(0, maxApps);
+    var appHtml = appsShow.length
+      ? appsShow.map(function (a) {
           var letter = (a.title || 'A').charAt(0).toUpperCase();
           return '<a class="card hover-lift" href="' + esc(a.url) + '" target="_blank" rel="noopener">' +
             '<span class="badge-ico" style="background:' + color(a.title) + '">' + esc(letter) + '</span>' +
@@ -331,10 +345,13 @@
         }).join('')
       : '';
 
+    news = news.slice(0, maxNews);
+    notices = notices.slice(0, maxNotice);
+
     var galleryHtml = gallery.length
       ? '<section class="sec"><div class="sec-h"><h2>Hình ảnh nhà trường</h2></div>' +
         '<div class="gallery">' + gallery.map(function (src) {
-          return '<div class="gallery-item hover-zoom"><img src="' + esc(src) + '" alt="" loading="lazy"></div>';
+          return '<div class="gallery-item hover-zoom"><img src="' + esc(fixDriveUrl(src)) + '" alt="" loading="lazy"></div>';
         }).join('') + '</div></section>'
       : '';
 
@@ -351,42 +368,55 @@
 
     var intro = cfg.introHtml || cfg.welcomeText || 'Không gian thông tin và tiện ích làm việc dành cho cán bộ, giáo viên, nhân viên và cộng đồng.';
 
-    setHtml('#publicMain',
+    var parts = [];
+    parts.push(
       '<section class="hero">' +
-      (cfg.bannerUrl ? '<div class="hero-bg" style="background-image:url(' + esc(cfg.bannerUrl) + ')"></div>' : '') +
+      (cfg.bannerUrl ? '<div class="hero-bg" style="background-image:url(' + esc(fixDriveUrl(cfg.bannerUrl)) + ')"></div>' : '') +
       '<div class="hero-content">' +
       '<div class="badge">Cổng thông tin công khai</div>' +
       '<h1>' + esc(cfg.welcomeTitle || cfg.schoolName || 'Cổng thông tin trường học') + '</h1>' +
       '<p>' + esc(cfg.welcomeText || intro) + '</p>' +
       '<div class="hero-actions">' +
       '<button type="button" class="btn btn-primary lg" id="heroLogin">Đăng nhập làm việc</button> ' +
-      '<a class="btn btn-outline lg" href="#sec-news">Xem tin tức</a></div></div></section>' +
+      '<a class="btn btn-outline lg" href="#sec-news">Xem tin tức</a></div></div></section>'
+    );
+    if (cfgOn('showIntro', true)) {
+      parts.push(
+        '<section class="sec" id="sec-intro"><div class="sec-h"><h2>Giới thiệu</h2></div>' +
+        '<div class="panel intro-box"><p>' + esc(intro) + '</p>' +
+        (cfg.address || cfg.phone || cfg.email
+          ? '<p class="dim" style="margin-top:12px">' +
+            [cfg.address, cfg.phone && ('ĐT: ' + cfg.phone), cfg.email].filter(Boolean).join(' · ') + '</p>'
+          : '') +
+        '</div></section>'
+      );
+    }
+    if (cfgOn('showApps', true) && appHtml) {
+      parts.push('<section class="sec"><div class="sec-h"><h2>Ứng dụng thường dùng</h2></div><div class="grid">' + appHtml + '</div></section>');
+    }
+    if (cfgOn('showGallery', true) && galleryHtml) parts.push(galleryHtml);
+    if (cfgOn('showNews', true)) {
+      parts.push('<section class="sec" id="sec-news"><div class="sec-h"><h2>Tin mới nhất</h2></div>' + newsHtml + '</section>');
+    }
+    if (cfgOn('showNotice', true)) {
+      parts.push(
+        '<section class="sec" id="sec-notice"><div class="sec-h"><h2>Thông báo</h2></div>' +
+        '<div class="panel">' + noticeHtml + '</div></section>'
+      );
+    }
+    if (cfgOn('showContact', true)) {
+      parts.push(
+        '<section class="sec" id="sec-contact"><div class="sec-h"><h2>Liên hệ</h2></div>' +
+        '<div class="panel contact-grid">' +
+        '<div><b>Đơn vị</b><p class="dim">' + esc(cfg.schoolName || '—') + '</p></div>' +
+        '<div><b>Địa chỉ</b><p class="dim">' + esc(cfg.address || '—') + '</p></div>' +
+        '<div><b>Điện thoại</b><p class="dim">' + esc(cfg.phone || '—') + '</p></div>' +
+        '<div><b>Email</b><p class="dim">' + esc(cfg.email || '—') + '</p></div>' +
+        '</div></section>'
+      );
+    }
 
-      '<section class="sec" id="sec-intro"><div class="sec-h"><h2>Giới thiệu</h2></div>' +
-      '<div class="panel intro-box"><p>' + esc(intro) + '</p>' +
-      (cfg.address || cfg.phone || cfg.email
-        ? '<p class="dim" style="margin-top:12px">' +
-          [cfg.address, cfg.phone && ('ĐT: ' + cfg.phone), cfg.email].filter(Boolean).join(' · ') + '</p>'
-        : '') +
-      '</div></section>' +
-
-      (appHtml ? '<section class="sec"><div class="sec-h"><h2>Ứng dụng thường dùng</h2></div><div class="grid">' + appHtml + '</div></section>' : '') +
-
-      galleryHtml +
-
-      '<section class="sec" id="sec-news"><div class="sec-h"><h2>Tin mới nhất</h2></div>' + newsHtml + '</section>' +
-
-      '<section class="sec" id="sec-notice"><div class="sec-h"><h2>Thông báo</h2></div>' +
-      '<div class="panel">' + noticeHtml + '</div></section>' +
-
-      '<section class="sec" id="sec-contact"><div class="sec-h"><h2>Liên hệ</h2></div>' +
-      '<div class="panel contact-grid">' +
-      '<div><b>Đơn vị</b><p class="dim">' + esc(cfg.schoolName || '—') + '</p></div>' +
-      '<div><b>Địa chỉ</b><p class="dim">' + esc(cfg.address || '—') + '</p></div>' +
-      '<div><b>Điện thoại</b><p class="dim">' + esc(cfg.phone || '—') + '</p></div>' +
-      '<div><b>Email</b><p class="dim">' + esc(cfg.email || '—') + '</p></div>' +
-      '</div></section>');
-
+    setHtml('#publicMain', parts.join(''));
     var hl = el('heroLogin');
     if (hl) hl.onclick = openLogin;
     bindPostClicks('#publicMain');
@@ -936,60 +966,110 @@
     setText('#crumb', 'Cấu hình & ảnh');
     var c = state.config || {};
     var gCount = Number(c.galleryCount || 4) || 4;
+    function chk(name, label, on) {
+      return '<label class="switch-row"><input type="checkbox" name="' + name + '" value="true"' +
+        (on ? ' checked' : '') + '> <span>' + label + '</span></label>';
+    }
     var galFields = '';
     for (var i = 1; i <= Math.max(gCount, 4); i++) {
       galFields += field('Gallery ' + i + ' (URL)', 'gallery' + i, c['gallery' + i] || '', 'url');
     }
     setHtml('#workMain',
-      '<div class="panel"><h3>Thông tin & logo</h3><form class="form" id="cfgForm">' +
+      '<div class="panel form-panel"><h3>Cấu hình cổng</h3><form id="cfgForm">' +
+      '<div class="form-section"><div class="form-section-title">Thông tin & logo</div><div class="form-grid-2">' +
       field('Tên trường', 'schoolName', c.schoolName) +
-      field('Logo (URL ảnh)', 'logoUrl', c.logoUrl, 'url') +
+      field('Logo (URL)', 'logoUrl', c.logoUrl, 'url') +
       field('Địa chỉ', 'address', c.address) +
       field('Điện thoại', 'phone', c.phone) +
       field('Email', 'email', c.email) +
       field('Tiêu đề hero', 'welcomeTitle', c.welcomeTitle) +
-      field('Mô tả ngắn', 'welcomeText', c.welcomeText, 'textarea') +
-      field('Giới thiệu thêm', 'introHtml', c.introHtml, 'textarea') +
-      '<h3 class="span2" style="grid-column:1/-1;margin:8px 0 0">Drive & trang chủ</h3>' +
-      field('ID thư mục Drive (ảnh upload)', 'driveFolderId', c.driveFolderId) +
-      field('Số ảnh gallery trang chủ', 'galleryCount', String(gCount), 'number') +
-      field('Số tin tối đa trang chủ (server)', 'homePostLimit', c.homePostLimit || '12', 'number') +
-      field('Banner hero (URL)', 'bannerUrl', c.bannerUrl, 'url') +
-      galFields +
-      '<label class="span2"><button class="btn btn-primary" type="submit">Lưu cấu hình</button></label></form>' +
-      '<div style="margin-top:14px"><label class="btn btn-outline">Tải logo lên Drive' +
-      '<input type="file" id="logoFile" accept="image/*" hidden></label> <span class="dim" id="logoUpMsg"></span></div>' +
-      '<p class="dim">Tạo thư mục trên Google Drive → chia sẻ với tài khoản chạy Apps Script → copy ID folder vào ô driveFolderId. Logo/ảnh upload sẽ vào folder đó.</p></div>');
+      '</div>' + field('Mô tả ngắn', 'welcomeText', c.welcomeText, 'textarea') +
+      field('Giới thiệu thêm', 'introHtml', c.introHtml, 'textarea') + '</div>' +
+      '<div class="form-section"><div class="form-section-title">Hiển thị trang chủ</div><div class="switch-grid">' +
+      chk('showIntro', 'Giới thiệu', cfgOn('showIntro', true)) +
+      chk('showApps', 'Ứng dụng thường dùng', cfgOn('showApps', true)) +
+      chk('showGallery', 'Hình ảnh nhà trường', cfgOn('showGallery', true)) +
+      chk('showNews', 'Tin mới nhất', cfgOn('showNews', true)) +
+      chk('showNotice', 'Thông báo', cfgOn('showNotice', true)) +
+      chk('showContact', 'Liên hệ', cfgOn('showContact', true)) +
+      '</div></div>' +
+      '<div class="form-section"><div class="form-section-title">Số lượng hiển thị</div><div class="form-grid-2">' +
+      field('Số ứng dụng', 'homeAppsLimit', c.homeAppsLimit || '12', 'number') +
+      field('Số ảnh gallery', 'galleryCount', String(gCount), 'number') +
+      field('Số tin mới nhất', 'homeNewsLimit', c.homeNewsLimit || '6', 'number') +
+      field('Số thông báo', 'homeNoticeLimit', c.homeNoticeLimit || '5', 'number') +
+      field('Số tin API', 'homePostLimit', c.homePostLimit || '12', 'number') +
+      field('ID thư mục Drive', 'driveFolderId', c.driveFolderId) +
+      '</div></div>' +
+      '<div class="form-section"><div class="form-section-title">Banner & gallery URL</div><div class="form-grid-2">' +
+      field('Banner hero (URL)', 'bannerUrl', c.bannerUrl, 'url') + galFields +
+      '</div><div class="btn-group" style="margin-top:10px">' +
+      '<label class="btn btn-outline file-btn">Tải logo<input type="file" id="logoFile" accept="image/*" hidden></label>' +
+      '<span class="dim" id="logoUpMsg"></span></div></div>' +
+      '<div class="form-footer"><button class="btn btn-primary" type="submit">Lưu cấu hình</button></div></form>' +
+      '<div class="danger-zone"><div class="form-section-title">Vùng nguy hiểm (cần admin đã đăng nhập)</div>' +
+      '<p class="dim">Không hoàn tác.</p><div class="btn-group">' +
+      '<button type="button" class="btn btn-danger-solid" id="btnDelPosts">Xóa tất cả bài đăng</button>' +
+      '<button type="button" class="btn btn-danger-solid" id="btnDelConfig">Reset cấu hình</button>' +
+      '<button type="button" class="btn btn-danger-solid" id="btnDelImages">Xóa ảnh Drive folder</button>' +
+      '</div></div></div>');
+
     el('cfgForm').onsubmit = function (e) {
       e.preventDefault();
-      var config = Object.fromEntries(new FormData(e.target));
+      var fd = new FormData(e.target);
+      var config = {};
+      ['schoolName','logoUrl','address','phone','email','welcomeTitle','welcomeText','introHtml',
+        'homeAppsLimit','galleryCount','homeNewsLimit','homeNoticeLimit','homePostLimit','driveFolderId','bannerUrl'
+      ].forEach(function (k) { if (fd.has(k)) config[k] = fd.get(k); });
+      for (var i = 1; i <= 12; i++) if (fd.has('gallery' + i)) config['gallery' + i] = fd.get('gallery' + i);
+      ['showIntro','showApps','showGallery','showNews','showNotice','showContact'].forEach(function (k) {
+        config[k] = fd.get(k) ? 'true' : 'false';
+      });
       api('saveConfig', { config: config }).then(function () {
         state.config = Object.assign({}, state.config, config);
-        applyLogo();
-        paintSide();
-        toast('Đã lưu cấu hình');
+        applyLogo(); paintSide(); toast('Đã lưu cấu hình');
       }).catch(function (err) { toast(err.message); });
     };
     var lf = el('logoFile');
     if (lf) lf.onchange = function () {
-      var f = lf.files && lf.files[0];
-      if (!f) return;
+      var f = lf.files && lf.files[0]; if (!f) return;
       setText('#logoUpMsg', 'Đang tải…');
       uploadFileInput(f).then(function (res) {
         var input = document.querySelector('#cfgForm input[name="logoUrl"]');
         if (input) input.value = res.url;
-        state.config.logoUrl = res.url;
-        applyLogo();
-        setText('#logoUpMsg', 'Đã upload logo');
-        toast('Logo đã upload — bấm Lưu cấu hình để ghi nhận');
-      }).catch(function (err) {
-        setText('#logoUpMsg', err.message);
-        toast(err.message);
-      });
+        state.config.logoUrl = res.url; applyLogo();
+        setText('#logoUpMsg', 'OK — bấm Lưu cấu hình');
+      }).catch(function (err) { setText('#logoUpMsg', err.message); });
+    };
+    function needAdmin() {
+      if (!state.token || !state.isAdmin) { toast('Cần đăng nhập admin'); return false; }
+      return true;
+    }
+    el('btnDelPosts').onclick = function () {
+      if (!needAdmin()) return;
+      if (!confirm('XÓA TẤT CẢ bài đăng?')) return;
+      if (!confirm('Xác nhận lần 2?')) return;
+      api('deleteAllPosts', {}).then(function (r) {
+        toast('Đã xóa ' + (r.deleted || 0) + ' bài');
+        return api('bootstrap');
+      }).then(function (d) { apply(d, true); }).catch(function (e) { toast(e.message); });
+    };
+    el('btnDelConfig').onclick = function () {
+      if (!needAdmin()) return;
+      if (!confirm('Reset cấu hình về mặc định?')) return;
+      api('resetConfig', {}).then(function () {
+        toast('Đã reset'); return api('bootstrap');
+      }).then(function (d) { apply(d, true); renderConfig(); }).catch(function (e) { toast(e.message); });
+    };
+    el('btnDelImages').onclick = function () {
+      if (!needAdmin()) return;
+      if (!confirm('Xóa TẤT CẢ file trong folder Drive?')) return;
+      api('deleteAllDriveImages', {}).then(function (r) {
+        toast('Đã xóa ' + (r.deleted || 0) + ' file');
+      }).catch(function (e) { toast(e.message); });
     };
   }
 
-  
   function openLogin() {
     show('#overlay'); setText('#loginErr', '');
     setTimeout(function () { var u = el('username'); if (u) u.focus(); }, 20);
