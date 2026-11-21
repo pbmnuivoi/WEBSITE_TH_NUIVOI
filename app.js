@@ -135,7 +135,13 @@ function renderPublicShell() {
 
   const items = [
     { menuId: 'HOME', title: 'Trang chủ', icon: 'house', sortOrder: 0 },
-    ...state.menus.filter(m => m.menuId !== 'M_HOME' && m.menuId !== 'HOME')
+    ...state.menus.filter(m => {
+      if (m.menuId === 'M_HOME' || m.menuId === 'HOME') return false;
+      // Chỉ lấy menu thanh trên; bỏ các mục gắn location HOME (thường là shortcut lẫn app)
+      const loc = String(m.location || 'SIDEBAR').toUpperCase();
+      if (loc === 'HOME') return false;
+      return true;
+    })
   ].sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
 
   const navHtml = items.map(m =>
@@ -196,7 +202,14 @@ function renderPage(title, html) {
 
 function renderHome() {
   const cfg = state.config || {};
-  const apps = state.apps;
+  const apps = [];
+  const seen = new Set();
+  (state.apps || []).forEach(a => {
+    const k = (String(a.title||'') + '|' + String(a.url||'')).toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    apps.push(a);
+  });
   const posts = state.posts;
 
   const appCards = apps.length
@@ -429,7 +442,7 @@ async function onLogout() {
 
 function closeDrawer() {
   const d = $('#mobileDrawer');
-  if (d) d.hidden = true;
+  if (d) { d.classList.remove('is-open'); d.hidden = true; }
 }
 
 function esc(s) {
@@ -444,7 +457,8 @@ $('#loginBackdrop').onclick = closeLogin;
 $('#btnLogout').onclick = onLogout;
 $('#menuToggle').onclick = () => {
   const d = $('#mobileDrawer');
-  d.hidden = !d.hidden;
+  d.classList.toggle('is-open');
+  d.hidden = !d.classList.contains('is-open');
 };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLogin(); });
 
