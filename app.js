@@ -182,7 +182,13 @@
       var isImage = /^image\//i.test(file.type || '');
       var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
       if (!isImage && !isPdf) return reject(new Error('Chỉ nhận file ảnh hoặc PDF'));
-      if (file.size > 10 * 1024 * 1024) return reject(new Error('File tối đa 10MB'));
+      // PDF tối đa 100MB; ảnh vẫn nén client-side
+      if (isPdf && file.size > 100 * 1024 * 1024) {
+        return reject(new Error('PDF tối đa 100MB. File lớn nên tải lên Drive rồi dán link.'));
+      }
+      if (isImage && file.size > 15 * 1024 * 1024) {
+        return reject(new Error('Ảnh tối đa 15MB (sẽ tự nén).'));
+      }
 
       var reader = new FileReader();
       reader.onerror = function () { reject(new Error('Không đọc được file')); };
@@ -190,14 +196,22 @@
         if (isPdf) {
           var dataUrl = String(reader.result || '');
           var base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
-          if (base64.length > 7 * 1024 * 1024) {
-            return reject(new Error('PDF quá lớn (sau mã hóa base64). Hãy dùng file nhỏ hơn ~5MB.'));
+          // Lưu ý: payload base64 lớn có thể bị giới hạn bởi GAS/Worker (~vài chục MB thực tế)
+          if (file.size > 25 * 1024 * 1024) {
+            toast('PDF lớn — đang gửi lên máy chủ, có thể mất vài chục giây…');
           }
           api('uploadImage', {
             fileName: file.name || ('doc_' + Date.now() + '.pdf'),
             mimeType: 'application/pdf',
             base64: base64
-          }).then(resolve).catch(reject);
+          }).then(resolve).catch(function (err) {
+            var msg = (err && err.message) || 'Lỗi upload PDF';
+            if (/payload|too large|limit|memory|timeout|Failed to fetch|network/i.test(msg) || file.size > 15 * 1024 * 1024) {
+              reject(new Error('Không gửi được PDF lớn qua API. Hãy tải PDF lên Google Drive, bật chia sẻ, rồi dùng nút «+ Thêm URL PDF».'));
+            } else {
+              reject(err);
+            }
+          });
           return;
         }
         var img = new Image();
@@ -776,7 +790,24 @@
     return '<button type="button" data-side="' + esc(id) + '"><span class="nav-ico">' + ico + '</span><span>' + esc(title) + '</span></button>';
   }
 
+  // Token để bỏ qua response cũ khi user bấm menu khác trước khi tải xong
+  var sideNavToken = 0;
+  var listCache = { posts: null, postsAt: 0, apps: null, appsAt: 0, menus: null, menusAt: 0, users: null, usersAt: 0 };
+  var LIST_CACHE_MS = 15000;
+
+  function showWorkLoading(title) {
+    setText('#crumb', title || 'Đang tải');
+    setHtml('#workMain',
+      '<div class="panel work-loading">' +
+      '<div class="skel skel-title"></div>' +
+      '<div class="skel skel-line"></div>' +
+      '<div class="skel skel-line short"></div>' +
+      '<div class="skel skel-block"></div>' +
+      '<p class="dim" style="margin-top:12px">Đang tải dữ liệu…</p></div>');
+  }
+
   function navSide(id) {
+    sideNavToken++;
     if (id === 'POSTS') return renderPostsList();
     if (id === 'POST_NEW') return renderPostForm(null);
     if (id === 'APPS') return renderAppsCrud();
@@ -833,12 +864,23 @@
   }
 
   function renderPostsList() {
-    setText('#crumb', 'Tin tức & thông báo');
-    setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
-    var loader = api('listAllPosts').catch(function () {
-      return api('bootstrap').then(function (d) { apply(d, true); return state.posts || []; });
-    });
+    var myToken = sideNavToken;
+    showWorkLoading('Tin tức & thông báo');
+    var now = Date.now();
+    var loader;
+    if (listCache.posts && (now - listCache.postsAt) < LIST_CACHE_MS) {
+      loader = Promise.resolve(listCache.posts);
+    } else {
+      loader = api('listAllPosts').then(function (posts) {
+        listCache.posts = posts;
+        listCache.postsAt = Date.now();
+        return posts;
+      }).catch(function () {
+        return api('bootstrap').then(function (d) { apply(d, true); return state.posts || []; });
+      });
+    }
     loader.then(function (posts) {
+      if (myToken !== sideNavToken) return; // đã chuyển menu khác
       if (!Array.isArray(posts)) posts = state.posts || [];
       state._allPosts = posts;
       function draw(filter, fromD, toD) {
@@ -895,7 +937,7 @@
           b.onclick = function () {
             if (!confirm('Xóa bài viết này vĩnh viễn?')) return;
             api('deletePost', { postId: b.getAttribute('data-del') })
-              .then(function () { toast('Đã xóa'); renderPostsList(); })
+              .then(function () { listCache.posts = null; listCache.postsAt = 0; toast('Đã xóa'); renderPostsList(); })
               .catch(function (e) { toast(e.message); });
           };
         });
@@ -911,16 +953,17 @@
     setText('#crumb', post.postId ? 'Sửa bài' : 'Viết bài mới');
     var today = new Date().toISOString().slice(0, 10);
 
-    // Tách ảnh, PDF, embed từ contentHtml cũ để đưa vào form
+    // Tách ảnh, PDF, HTML embed từ contentHtml cũ để đưa vào form
     var extraImgs = [];
     var extraPdfs = [];
-    var extraEmbed = '';
+    var extraHtmlFiles = []; // { name, html }
     var bodySeed = '';
     try {
       if (post.contentHtml) {
         var tmp = String(post.contentHtml);
+        var mm;
         // Ảnh media-img
-        var reImg = /<p class="media-img">[\s\S]*?<img[^>]+src=["'](https?:[^"']+)["'][^>]*>[\s\S]*?<\/p>/gi, mm;
+        var reImg = /<p class="media-img">[\s\S]*?<img[^>]+src=["'](https?:[^"']+)["'][^>]*>[\s\S]*?<\/p>/gi;
         while ((mm = reImg.exec(tmp))) {
           if (extraImgs.indexOf(mm[1]) < 0) extraImgs.push(mm[1]);
         }
@@ -929,16 +972,16 @@
         while ((mm = rePdf.exec(tmp))) {
           extraPdfs.push({ url: mm[1], title: 'Tài liệu PDF' });
         }
-        // Embed còn lại (iframe không phải youtube/pdf đã tách)
-        var reEmbed = /<div class="media-embed">([\s\S]*?)<\/div>/gi;
+        // HTML nhúng (từ file)
+        var reEmbed = /<div class="media-embed"[^>]*(?:data-name=["']([^"']*)["'])?[^>]*>([\s\S]*?)<\/div>/gi;
         while ((mm = reEmbed.exec(tmp))) {
-          extraEmbed += mm[1] + '\n';
+          extraHtmlFiles.push({ name: mm[1] || 'file.html', html: mm[2] });
         }
         // Body text: bỏ media blocks
         var clean = tmp
           .replace(/<p class="media-img">[\s\S]*?<\/p>/gi, '')
           .replace(/<div class="media-pdf"[\s\S]*?<\/div>/gi, '')
-          .replace(/<div class="media-embed">[\s\S]*?<\/div>/gi, '')
+          .replace(/<div class="media-embed"[\s\S]*?<\/div>/gi, '')
           .replace(/<div class="media-video">[\s\S]*?<\/div>/gi, '');
         bodySeed = stripHtml(clean);
       }
@@ -993,10 +1036,14 @@
       '<span class="dim" id="upPdfMsg"></span></div></div></div>' +
 
       '<div class="form-section">' +
-      '<div class="form-section-title">Nhúng HTML / iframe (xem trong vùng nội dung)</div>' +
-      '<p class="dim" style="margin:0 0 8px">Dán mã nhúng (iframe Google Form, Drive preview, bản đồ…). Sẽ hiển thị nguyên vẹn cuối bài.</p>' +
-      '<label class="span2">Mã nhúng<textarea name="embedHtml" rows="4" placeholder="<iframe src=&quot;...&quot; ...></iframe>">' + esc(extraEmbed.trim()) + '</textarea></label>' +
-      '</div>' +
+      '<div class="form-section-title">Nhúng HTML (nạp file .html)</div>' +
+      '<div class="img-block">' +
+      '<div class="img-block-head"><b>File HTML</b><span class="dim">Chọn file .html — nội dung sẽ hiện cuối bài</span></div>' +
+      '<div id="htmlList" class="img-list"></div>' +
+      '<div class="btn-group img-actions">' +
+      '<label class="btn btn-outline file-btn">Nạp file HTML<input type="file" id="postHtmlFile" accept=".html,.htm,text/html" hidden multiple></label>' +
+      '<span class="dim" id="upHtmlMsg"></span></div></div></div>' +
+
 
       '<div class="form-section form-section-row">' +
       '<label class="field-inline">Trạng thái' +
@@ -1015,6 +1062,7 @@
 
     var imgUrls = extraImgs.slice();
     var pdfItems = extraPdfs.slice(); // {url, title}
+    var htmlItems = extraHtmlFiles.slice(); // {name, html}
 
     function renderImgList() {
       var box = el('imgList');
@@ -1067,8 +1115,34 @@
       });
     }
 
+    function renderHtmlList() {
+      var box = el('htmlList');
+      if (!box) return;
+      if (!htmlItems.length) {
+        box.innerHTML = '<p class="dim empty-imgs">Chưa nạp file HTML.</p>';
+        return;
+      }
+      box.innerHTML = htmlItems.map(function (it, i) {
+        var sizeHint = it.html ? (Math.round((it.html.length / 1024) * 10) / 10 + ' KB') : '';
+        return '<div class="img-row pdf-row">' +
+          '<span class="pdf-icon">🌐</span>' +
+          '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+          esc(it.name || 'file.html') +
+          (sizeHint ? ' <span class="dim">(' + sizeHint + ')</span>' : '') +
+          '</span>' +
+          '<button type="button" class="btn-sm btn-danger" data-html-rm="' + i + '">Xóa</button></div>';
+      }).join('');
+      $$('#htmlList [data-html-rm]').forEach(function (b) {
+        b.onclick = function () {
+          htmlItems.splice(Number(b.getAttribute('data-html-rm')), 1);
+          renderHtmlList();
+        };
+      });
+    }
+
     renderImgList();
     renderPdfList();
+    renderHtmlList();
 
     el('btnAddImgUrl').onclick = function () {
       var u = prompt('Dán URL ảnh:');
@@ -1126,6 +1200,43 @@
       });
     };
 
+    el('postHtmlFile').onchange = function () {
+      var files = Array.prototype.slice.call(el('postHtmlFile').files || []);
+      if (!files.length) return;
+      setText('#upHtmlMsg', 'Đang đọc ' + files.length + ' file…');
+      var chain = Promise.resolve();
+      files.forEach(function (f) {
+        chain = chain.then(function () {
+          return new Promise(function (resolve, reject) {
+            if (f.size > 5 * 1024 * 1024) {
+              reject(new Error('File HTML tối đa 5MB: ' + f.name));
+              return;
+            }
+            var reader = new FileReader();
+            reader.onerror = function () { reject(new Error('Không đọc được ' + f.name)); };
+            reader.onload = function () {
+              var text = String(reader.result || '');
+              // Lấy phần body nếu là trang HTML đầy đủ
+              var bodyMatch = text.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+              var content = bodyMatch ? bodyMatch[1] : text;
+              htmlItems.push({ name: f.name || 'file.html', html: content });
+              renderHtmlList();
+              resolve();
+            };
+            reader.readAsText(f, 'UTF-8');
+          });
+        });
+      });
+      chain.then(function () {
+        setText('#upHtmlMsg', 'Đã nạp ' + files.length + ' file');
+        toast('Đã nạp file HTML');
+        el('postHtmlFile').value = '';
+      }).catch(function (err) {
+        setText('#upHtmlMsg', err.message || 'Lỗi');
+        toast(err.message || 'Lỗi đọc HTML');
+      });
+    };
+
     el('postForm').onsubmit = function (e) {
       e.preventDefault();
       var form = e.currentTarget;
@@ -1156,22 +1267,23 @@
       var pdfHtml = pdfItems.map(function (it) {
         return buildPdfEmbed(it.url, it.title);
       }).join('');
-      var embedRaw = String(fd.embedHtml || '').trim();
-      var embedHtml = embedRaw
-        ? '<div class="media-embed">' + embedRaw + '</div>'
-        : '';
+      var embedHtml = htmlItems.map(function (it) {
+        var nameAttr = it.name ? ' data-name="' + esc(it.name) + '"' : '';
+        return '<div class="media-embed"' + nameAttr + '>' + (it.html || '') + '</div>';
+      }).join('');
 
-      // Ảnh, PDF, embed đặt CUỐI bài viết
+      // Ảnh, PDF, HTML đặt CUỐI bài viết
       fd.contentHtml = body + mediaHtml + pdfHtml + embedHtml;
 
       if (!fd.publishedAt) fd.publishedAt = today;
       if (/^\d{4}-\d{2}-\d{2}$/.test(fd.publishedAt)) fd.publishedAt = fd.publishedAt + 'T00:00:00.000Z';
       if (fd.thumbnailUrl) fd.thumbnailUrl = fixDriveUrl(fd.thumbnailUrl);
       if (!fd.postId) delete fd.postId;
-      delete fd.bodyText; delete fd.videoUrl; delete fd.embedHtml;
+      delete fd.bodyText; delete fd.videoUrl;
 
       api('savePost', fd).then(function () {
         toast('Đã lưu bài viết.');
+        listCache.posts = null; listCache.postsAt = 0;
         recentActionButton = null;
         renderPostsList();
       }).catch(function (err) {
@@ -1193,9 +1305,16 @@
 
   function renderAppsCrud() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
-    setText('#crumb', 'Ứng dụng');
-    setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
-    api('listAppsAdmin').then(function (apps) {
+    var myToken = sideNavToken;
+    showWorkLoading('Ứng dụng');
+    var now = Date.now();
+    var loader = (listCache.apps && (now - listCache.appsAt) < LIST_CACHE_MS)
+      ? Promise.resolve(listCache.apps)
+      : api('listAppsAdmin').then(function (apps) {
+          listCache.apps = apps; listCache.appsAt = Date.now(); return apps;
+        });
+    loader.then(function (apps) {
+      if (myToken !== sideNavToken) return;
       var rows = (apps || []).map(function (a) {
         return '<tr><td><b>' + esc(a.title) + '</b><div class="dim" style="font-size:11px">' + esc(a.url) + '</div></td>' +
           '<td class="actions"><button type="button" class="btn-sm" data-edit="' + esc(a.appId) + '">Sửa</button> ' +
@@ -1247,9 +1366,16 @@
 
   function renderMenusCrud() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
-    setText('#crumb', 'Menu trang chủ');
-    setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
-    api('listMenusAdmin').then(function (all) {
+    var myToken = sideNavToken;
+    showWorkLoading('Menu trang chủ');
+    var now = Date.now();
+    var loader = (listCache.menus && (now - listCache.menusAt) < LIST_CACHE_MS)
+      ? Promise.resolve(listCache.menus)
+      : api('listMenusAdmin').then(function (all) {
+          listCache.menus = all; listCache.menusAt = Date.now(); return all;
+        });
+    loader.then(function (all) {
+      if (myToken !== sideNavToken) return;
       var list = (all || []).filter(function (m) {
         return String(m.location || '').toUpperCase() === 'HOME' &&
           m.menuId !== 'M_HOME' && String(m.title || '').toLowerCase() !== 'trang chủ';
@@ -1341,9 +1467,16 @@
 
   function renderUsersCrud() {
     if (!state.isAdmin) return toast('Chỉ quản trị');
-    setText('#crumb', 'Tài khoản');
-    setHtml('#workMain', '<div class="panel"><p class="dim">Đang tải…</p></div>');
-    api('listUsers').then(function (users) {
+    var myToken = sideNavToken;
+    showWorkLoading('Tài khoản');
+    var now = Date.now();
+    var loader = (listCache.users && (now - listCache.usersAt) < LIST_CACHE_MS)
+      ? Promise.resolve(listCache.users)
+      : api('listUsers').then(function (users) {
+          listCache.users = users; listCache.usersAt = Date.now(); return users;
+        });
+    loader.then(function (users) {
+      if (myToken !== sideNavToken) return;
       var rows = (users || []).map(function (u) {
         return '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.fullName) + '</td><td>' + esc(u.groupCode) + '</td><td>' + esc(u.status) + '</td>' +
           '<td class="actions">' +
