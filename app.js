@@ -179,12 +179,27 @@
   function uploadFileInput(file) {
     return new Promise(function (resolve, reject) {
       if (!file) return reject(new Error('Chưa chọn file'));
-      if (!/^image\//i.test(file.type || '')) return reject(new Error('Chỉ nhận file ảnh'));
-      if (file.size > 8 * 1024 * 1024) return reject(new Error('Ảnh tối đa 8MB (sẽ tự nén)'));
+      var isImage = /^image\//i.test(file.type || '');
+      var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+      if (!isImage && !isPdf) return reject(new Error('Chỉ nhận file ảnh hoặc PDF'));
+      if (file.size > 10 * 1024 * 1024) return reject(new Error('File tối đa 10MB'));
 
       var reader = new FileReader();
       reader.onerror = function () { reject(new Error('Không đọc được file')); };
       reader.onload = function () {
+        if (isPdf) {
+          var dataUrl = String(reader.result || '');
+          var base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+          if (base64.length > 7 * 1024 * 1024) {
+            return reject(new Error('PDF quá lớn (sau mã hóa base64). Hãy dùng file nhỏ hơn ~5MB.'));
+          }
+          api('uploadImage', {
+            fileName: file.name || ('doc_' + Date.now() + '.pdf'),
+            mimeType: 'application/pdf',
+            base64: base64
+          }).then(resolve).catch(reject);
+          return;
+        }
         var img = new Image();
         img.onload = function () {
           var maxW = 1600;
@@ -196,7 +211,6 @@
           ctx.drawImage(img, 0, 0, w, h);
           var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
           var base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
-          // ~ base64 size check ~3.5MB payload
           if (base64.length > 3.5 * 1024 * 1024) {
             dataUrl = canvas.toDataURL('image/jpeg', 0.65);
             base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
@@ -424,6 +438,36 @@
     return m ? m[1] : '';
   }
 
+  function isImageUrl(u) {
+    u = String(u || '').trim();
+    if (!u) return false;
+    if (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|#|$)/i.test(u)) return true;
+    if (/lh3\.googleusercontent\.com|drive\.google\.com\/uc|googleusercontent\.com\/d\//i.test(u)) return true;
+    if (/\/thumbnail\?id=/i.test(u)) return true;
+    return false;
+  }
+
+  function processBodyText(text) {
+    if (!text) return '';
+    // Escape trước, sau đó khôi phục link/ảnh từ URL thuần
+    var escaped = esc(String(text));
+    // URL pattern (http/https)
+    var urlRe = /(https?:\/\/[^\s<>"']+)/gi;
+    escaped = escaped.replace(urlRe, function (url) {
+      if (isImageUrl(url)) {
+        return '</p><p class="media-img"><img src="' + url + '" alt="" loading="lazy"></p><p>';
+      }
+      return '<a href="' + url + '" target="_blank" rel="noopener">' + url + '</a>';
+    });
+    // Tách đoạn theo \n\n
+    return escaped.split(/\n{2,}/).map(function (p) {
+      p = p.replace(/\n/g, '<br>');
+      // dọn <p> rỗng do chèn ảnh
+      if (!p.replace(/<br>/g, '').trim()) return '';
+      return '<p>' + p + '</p>';
+    }).filter(Boolean).join('');
+  }
+
   function buildContentHtml(text, imageUrl, videoUrl) {
     var html = '';
     if (imageUrl) {
@@ -437,11 +481,30 @@
       html += '<p class="media-video"><video src="' + esc(videoUrl) + '" controls></video></p>';
     }
     if (text) {
-      html += String(text).split(/\n{2,}/).map(function (p) {
-        return '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>';
-      }).join('');
+      html += processBodyText(text);
     }
     return html;
+  }
+
+  function buildPdfEmbed(url, title) {
+    url = String(url || '').trim();
+    if (!url) return '';
+    // Drive file → dùng preview
+    var id = '';
+    var m1 = url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+    var m2 = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/);
+    var m3 = url.match(/\/file\/d\/([a-zA-Z0-9_-]{10,})/);
+    if (m1) id = m1[1];
+    else if (m2) id = m2[1];
+    else if (m3) id = m3[1];
+    var src = id
+      ? 'https://drive.google.com/file/d/' + id + '/preview'
+      : url;
+    var label = title || 'Tài liệu PDF';
+    return '<div class="media-pdf">' +
+      '<div class="media-pdf-head"><span>📄 ' + esc(label) + '</span>' +
+      '<a href="' + esc(url) + '" target="_blank" rel="noopener">Mở / tải xuống</a></div>' +
+      '<iframe src="' + esc(src) + '" title="' + esc(label) + '" loading="lazy" allowfullscreen></iframe></div>';
   }
 
   function postCard(p) {
@@ -652,27 +715,18 @@
     function view(p) {
       if (!p) return toast('Không tìm thấy bài viết');
       var html = p.contentHtml || '';
-      var imgs = [];
-      var re = /src=["'](https?:[^"']+)["']/gi, mm;
-      while ((mm = re.exec(html))) {
-        if (imgs.indexOf(mm[1]) < 0) imgs.push(mm[1]);
-      }
-      if (p.thumbnailUrl && imgs.indexOf(p.thumbnailUrl) < 0) imgs.unshift(p.thumbnailUrl);
-      // bỏ thẻ img trong body để tránh trùng, giữ text/video
-      var body = html.replace(/<p class="media-img">[\s\S]*?<\/p>/gi, '').replace(/<img[^>]*>/gi, '');
-      var gal = imgs.length
-        ? '<div class="article-gallery">' + imgs.map(function (u) {
-            var fu = fixDriveUrl(u); return '<a class="g-item" href="' + esc(fu) + '" target="_blank" rel="noopener"><img src="' + esc(fu) + '" alt="" loading="lazy" onerror="this.style.opacity=.3"></a>';
-          }).join('') + '</div>'
-        : '';
+      // Giữ nguyên contentHtml (ảnh/PDF/embed đã nằm cuối hoặc inline). Chỉ fix Drive URL cho img.
+      html = html.replace(/src=(["'])(https?:[^"']+)\1/gi, function (_, q, u) {
+        return 'src=' + q + fixDriveUrl(u) + q;
+      });
       var dt = (p.publishedAt || p.createdAt || '').toString().slice(0, 10);
       setHtml('#publicMain',
         '<article class="panel article">' +
         '<span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
         '<h1>' + esc(p.title) + '</h1>' +
         '<p class="dim">' + esc(p.summary || '') + (dt ? ' · ' + esc(dt) : '') + '</p>' +
-        gal +
-        '<div class="article-body">' + body + '</div>' +
+        (p.thumbnailUrl ? '<div class="article-hero"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="lazy"></div>' : '') +
+        '<div class="article-body">' + html + '</div>' +
         '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Về trang chủ</button></p></article>');
       var b = el('backPub');
       if (b) b.onclick = renderPublicHome;
@@ -856,11 +910,37 @@
     post = post || {};
     setText('#crumb', post.postId ? 'Sửa bài' : 'Viết bài mới');
     var today = new Date().toISOString().slice(0, 10);
+
+    // Tách ảnh, PDF, embed từ contentHtml cũ để đưa vào form
     var extraImgs = [];
+    var extraPdfs = [];
+    var extraEmbed = '';
+    var bodySeed = '';
     try {
       if (post.contentHtml) {
-        var re = /src=["'](https?:[^"']+)["']/g, mm;
-        while ((mm = re.exec(post.contentHtml))) extraImgs.push(mm[1]);
+        var tmp = String(post.contentHtml);
+        // Ảnh media-img
+        var reImg = /<p class="media-img">[\s\S]*?<img[^>]+src=["'](https?:[^"']+)["'][^>]*>[\s\S]*?<\/p>/gi, mm;
+        while ((mm = reImg.exec(tmp))) {
+          if (extraImgs.indexOf(mm[1]) < 0) extraImgs.push(mm[1]);
+        }
+        // PDF
+        var rePdf = /<div class="media-pdf"[\s\S]*?<iframe[^>]+src=["'](https?:[^"']+)["'][^>]*>[\s\S]*?<\/div>/gi;
+        while ((mm = rePdf.exec(tmp))) {
+          extraPdfs.push({ url: mm[1], title: 'Tài liệu PDF' });
+        }
+        // Embed còn lại (iframe không phải youtube/pdf đã tách)
+        var reEmbed = /<div class="media-embed">([\s\S]*?)<\/div>/gi;
+        while ((mm = reEmbed.exec(tmp))) {
+          extraEmbed += mm[1] + '\n';
+        }
+        // Body text: bỏ media blocks
+        var clean = tmp
+          .replace(/<p class="media-img">[\s\S]*?<\/p>/gi, '')
+          .replace(/<div class="media-pdf"[\s\S]*?<\/div>/gi, '')
+          .replace(/<div class="media-embed">[\s\S]*?<\/div>/gi, '')
+          .replace(/<div class="media-video">[\s\S]*?<\/div>/gi, '');
+        bodySeed = stripHtml(clean);
       }
     } catch (e) {}
 
@@ -880,22 +960,42 @@
       '</div></div>' +
 
       '<div class="form-section">' +
-      '<div class="form-section-title">Ảnh & media</div>' +
+      '<div class="form-section-title">Ảnh đại diện & video</div>' +
       '<div class="form-grid-2">' +
       field('Ảnh đại diện (URL)', 'thumbnailUrl', post.thumbnailUrl, 'url') +
       field('Video YouTube / .mp4 (URL)', 'videoUrl', '', 'url') +
+      '</div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">Nội dung bài viết</div>' +
+      '<p class="dim" style="margin:0 0 8px">Gõ văn bản. Dán link thường → thành liên kết. Dán link ảnh → hiện ảnh. Ảnh/PDF/embed sẽ được đặt <b>cuối bài</b>.</p>' +
+      field('Nội dung', 'bodyText', bodySeed, 'textarea') +
       '</div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">Ảnh trong bài (đặt cuối bài)</div>' +
       '<div class="img-block">' +
-      '<div class="img-block-head"><b>Ảnh trong bài</b><span class="dim">Có thể thêm nhiều ảnh</span></div>' +
+      '<div class="img-block-head"><b>Danh sách ảnh</b><span class="dim">Upload hoặc dán URL</span></div>' +
       '<div id="imgList" class="img-list"></div>' +
       '<div class="btn-group img-actions">' +
-      '<button type="button" class="btn btn-outline" id="btnAddImgUrl">+ Thêm URL</button>' +
-      '<label class="btn btn-outline file-btn">Upload file<input type="file" id="postImgFile" accept="image/*" hidden multiple></label>' +
+      '<button type="button" class="btn btn-outline" id="btnAddImgUrl">+ Thêm URL ảnh</button>' +
+      '<label class="btn btn-outline file-btn">Upload ảnh<input type="file" id="postImgFile" accept="image/*" hidden multiple></label>' +
       '<span class="dim" id="upMsg"></span></div></div></div>' +
 
       '<div class="form-section">' +
-      '<div class="form-section-title">Nội dung</div>' +
-      field('Nội dung bài viết', 'bodyText', stripHtml(post.contentHtml), 'textarea') +
+      '<div class="form-section-title">PDF đính kèm (nhúng xem trong bài)</div>' +
+      '<div class="img-block">' +
+      '<div class="img-block-head"><b>File PDF</b><span class="dim">Upload hoặc dán link Drive/PDF</span></div>' +
+      '<div id="pdfList" class="img-list"></div>' +
+      '<div class="btn-group img-actions">' +
+      '<button type="button" class="btn btn-outline" id="btnAddPdfUrl">+ Thêm URL PDF</button>' +
+      '<label class="btn btn-outline file-btn">Upload PDF<input type="file" id="postPdfFile" accept="application/pdf,.pdf" hidden multiple></label>' +
+      '<span class="dim" id="upPdfMsg"></span></div></div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">Nhúng HTML / iframe (xem trong vùng nội dung)</div>' +
+      '<p class="dim" style="margin:0 0 8px">Dán mã nhúng (iframe Google Form, Drive preview, bản đồ…). Sẽ hiển thị nguyên vẹn cuối bài.</p>' +
+      '<label class="span2">Mã nhúng<textarea name="embedHtml" rows="4" placeholder="<iframe src=&quot;...&quot; ...></iframe>">' + esc(extraEmbed.trim()) + '</textarea></label>' +
       '</div>' +
 
       '<div class="form-section form-section-row">' +
@@ -914,6 +1014,8 @@
       '</div></form></div>');
 
     var imgUrls = extraImgs.slice();
+    var pdfItems = extraPdfs.slice(); // {url, title}
+
     function renderImgList() {
       var box = el('imgList');
       if (!box) return;
@@ -937,7 +1039,36 @@
         inp.onchange = function () { imgUrls[Number(inp.getAttribute('data-i'))] = inp.value.trim(); };
       });
     }
+
+    function renderPdfList() {
+      var box = el('pdfList');
+      if (!box) return;
+      if (!pdfItems.length) {
+        box.innerHTML = '<p class="dim empty-imgs">Chưa có PDF.</p>';
+        return;
+      }
+      box.innerHTML = pdfItems.map(function (it, i) {
+        return '<div class="img-row pdf-row">' +
+          '<span class="pdf-icon">📄</span>' +
+          '<input type="text" value="' + esc(it.url) + '" data-pdf-i="' + i + '" placeholder="URL PDF">' +
+          '<button type="button" class="btn-sm btn-danger" data-pdf-rm="' + i + '">Xóa</button></div>';
+      }).join('');
+      $$('#pdfList [data-pdf-rm]').forEach(function (b) {
+        b.onclick = function () {
+          pdfItems.splice(Number(b.getAttribute('data-pdf-rm')), 1);
+          renderPdfList();
+        };
+      });
+      $$('#pdfList input[data-pdf-i]').forEach(function (inp) {
+        inp.onchange = function () {
+          var i = Number(inp.getAttribute('data-pdf-i'));
+          if (pdfItems[i]) pdfItems[i].url = inp.value.trim();
+        };
+      });
+    }
+
     renderImgList();
+    renderPdfList();
 
     el('btnAddImgUrl').onclick = function () {
       var u = prompt('Dán URL ảnh:');
@@ -951,9 +1082,8 @@
       files.forEach(function (f) {
         chain = chain.then(function () {
           return uploadFileInput(f).then(function (res) {
-            var url = fixDriveUrl(res.url || res.fileId || '');
-            if (res.fileId && !res.url) url = fixDriveUrl(res.fileId);
-            imgUrls.push(res.url || url);
+            var url = res.url || fixDriveUrl(res.fileId || '');
+            imgUrls.push(url);
             renderImgList();
           });
         });
@@ -968,6 +1098,34 @@
       });
     };
 
+    el('btnAddPdfUrl').onclick = function () {
+      var u = prompt('Dán URL PDF hoặc link Google Drive:');
+      if (u) { pdfItems.push({ url: u.trim(), title: 'Tài liệu PDF' }); renderPdfList(); }
+    };
+    el('postPdfFile').onchange = function () {
+      var files = Array.prototype.slice.call(el('postPdfFile').files || []);
+      if (!files.length) return;
+      setText('#upPdfMsg', 'Đang tải ' + files.length + ' PDF…');
+      var chain = Promise.resolve();
+      files.forEach(function (f) {
+        chain = chain.then(function () {
+          return uploadFileInput(f).then(function (res) {
+            var url = res.url || fixDriveUrl(res.fileId || '');
+            pdfItems.push({ url: url, title: f.name || 'Tài liệu PDF' });
+            renderPdfList();
+          });
+        });
+      });
+      chain.then(function () {
+        setText('#upPdfMsg', 'Upload xong');
+        toast('Đã thêm PDF');
+        el('postPdfFile').value = '';
+      }).catch(function (err) {
+        setText('#upPdfMsg', err.message || 'Lỗi upload');
+        toast(err.message || 'Lỗi upload PDF');
+      });
+    };
+
     el('postForm').onsubmit = function (e) {
       e.preventDefault();
       var form = e.currentTarget;
@@ -978,23 +1136,42 @@
       if (saveBtn) saveBtn.textContent = 'Đang lưu…';
       var fd = Object.fromEntries(new FormData(form));
       fd.pinned = !!(form.pinned && form.pinned.checked);
+
+      // Đồng bộ URL ảnh/PDF từ input
       $$('#imgList input[data-i]').forEach(function (inp) {
         imgUrls[Number(inp.getAttribute('data-i'))] = inp.value.trim();
       });
+      $$('#pdfList input[data-pdf-i]').forEach(function (inp) {
+        var i = Number(inp.getAttribute('data-pdf-i'));
+        if (pdfItems[i]) pdfItems[i].url = inp.value.trim();
+      });
       imgUrls = imgUrls.filter(Boolean).map(fixDriveUrl);
-      var mediaHtml = imgUrls.map(function (u) {
-        return '<p class="media-img"><img src="' + esc(u) + '" alt=""></p>';
-      }).join('');
+      pdfItems = pdfItems.filter(function (it) { return it && it.url; });
+
+      // Nội dung: text (có auto-link + auto-img) + video trước, media cuối
       var body = buildContentHtml(fd.bodyText, '', fd.videoUrl);
-      fd.contentHtml = mediaHtml + body;
+      var mediaHtml = imgUrls.map(function (u) {
+        return '<p class="media-img"><img src="' + esc(u) + '" alt="" loading="lazy"></p>';
+      }).join('');
+      var pdfHtml = pdfItems.map(function (it) {
+        return buildPdfEmbed(it.url, it.title);
+      }).join('');
+      var embedRaw = String(fd.embedHtml || '').trim();
+      var embedHtml = embedRaw
+        ? '<div class="media-embed">' + embedRaw + '</div>'
+        : '';
+
+      // Ảnh, PDF, embed đặt CUỐI bài viết
+      fd.contentHtml = body + mediaHtml + pdfHtml + embedHtml;
+
       if (!fd.publishedAt) fd.publishedAt = today;
       if (/^\d{4}-\d{2}-\d{2}$/.test(fd.publishedAt)) fd.publishedAt = fd.publishedAt + 'T00:00:00.000Z';
       if (fd.thumbnailUrl) fd.thumbnailUrl = fixDriveUrl(fd.thumbnailUrl);
       if (!fd.postId) delete fd.postId;
-      delete fd.bodyText; delete fd.videoUrl;
+      delete fd.bodyText; delete fd.videoUrl; delete fd.embedHtml;
+
       api('savePost', fd).then(function () {
         toast('Đã lưu bài viết.');
-        // Không gọi bootstrap lần nữa: tải lại đúng danh sách bài viết đã lưu.
         recentActionButton = null;
         renderPostsList();
       }).catch(function (err) {
