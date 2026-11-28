@@ -538,60 +538,102 @@
   }
 
   /**
-   * Nhúng file HTML trong iframe sandbox — không ảnh hưởng CSS/JS/layout trang chủ.
-   * Giữ nguyên <style> / CSS trong file; sandbox không chạy script.
+   * Nhúng file HTML trong iframe cách ly.
+   * Lưu nguồn trong <script type="text/plain"> rồi gắn Blob URL khi hiển thị
+   * (ổn định hơn srcdoc — script/game chạy được).
    */
   function buildHtmlEmbed(name, html) {
     var label = name || 'file.html';
     var inner = String(html || '');
-    // Ảnh lỗi → hiện icon mặc định (trong iframe)
-    var fallbackScript =
-      '<script>(function(){function fb(img){if(!img||img.dataset.fb)return;img.dataset.fb="1";' +
-      'img.style.visibility="hidden";var s=document.createElement("span");s.textContent="\\uD83D\\uDDBC\\uFE0F";' +
-      's.setAttribute("aria-hidden","true");s.style.cssText="display:inline-flex;align-items:center;justify-content:center;' +
-      'min-width:48px;min-height:48px;font-size:32px;background:#ffffff22;border-radius:12px;";' +
-      'if(img.parentNode)img.parentNode.insertBefore(s,img);}document.addEventListener("error",function(e){' +
-      'if(e.target&&e.target.tagName==="IMG")fb(e.target);},true);})();<\/script>';
-    var imgCss = 'img{max-width:100%;height:auto}img[data-fb]{display:none}';
-
-    // Đã là trang đầy đủ → giữ nguyên CSS/JS; chỉ chèn fallback ảnh + meta nếu thiếu
-    if (/<\s*html[\s>]/i.test(inner)) {
-      if (!/<\/head>/i.test(inner)) {
-        inner = inner.replace(/<\s*html[^>]*>/i, '$&<head><meta charset="utf-8"></head>');
-      }
-      inner = inner.replace(/<\/head>/i, '<style>' + imgCss + '</style></head>');
-      if (/<\/body>/i.test(inner)) {
-        inner = inner.replace(/<\/body>/i, fallbackScript + '</body>');
-      } else {
-        inner += fallbackScript;
-      }
-    } else {
+    var imgCss = 'img{max-width:100%;height:auto}';
+    if (!/<\s*html[\s>]/i.test(inner)) {
       var styles = '';
       var styleChunks = inner.match(/<style[\s\S]*?<\/style>/gi);
       if (styleChunks && styleChunks.length) {
         styles = styleChunks.join('\n');
         inner = inner.replace(/<style[\s\S]*?<\/style>/gi, '');
       }
-      // Giữ script của mảnh HTML
       inner = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
         '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-        '<base target="_blank">' +
         '<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;line-height:1.5;word-wrap:break-word;}' +
         imgCss + 'table,video,iframe{max-width:100%;height:auto;}</style>\n' +
         styles +
-        '</head><body>' + inner + fallbackScript + '</body></html>';
+        '</head><body>' + inner + '</body></html>';
+    } else if (/<\/head>/i.test(inner) && inner.indexOf(imgCss) < 0) {
+      inner = inner.replace(/<\/head>/i, '<style>' + imgCss + '</style></head>');
     }
-    // allow-scripts: để game/HTML tương tác (mở quà, nút…) chạy được trong iframe
     return '<div class="media-embed-wrap" data-name="' + esc(label) + '">' +
       '<div class="media-embed-head"><span>🌐 ' + esc(label) + '</span></div>' +
+      '<script type="text/plain" class="embed-html-src">' +
+      String(inner).replace(/<\/script/gi, '<\\/script') +
+      '</script>' +
       '<iframe class="media-embed-frame" title="' + esc(label) + '" ' +
-      'sandbox="allow-scripts allow-same-origin allow-popups allow-forms" ' +
-      'loading="lazy" srcdoc="' + escapeSrcdoc(inner) + '"></iframe></div>';
+      'sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe></div>';
+  }
+
+  /** Gắn nội dung HTML vào iframe bằng Blob URL (chạy được CSS + JS) */
+  function activateHtmlEmbeds(root) {
+    var scope = (root && root.querySelectorAll) ? root : document;
+    var wraps = scope.querySelectorAll('.media-embed-wrap');
+    Array.prototype.forEach.call(wraps, function (wrap) {
+      var frame = wrap.querySelector('iframe.media-embed-frame');
+      var srcEl = wrap.querySelector('.embed-html-src');
+      if (!frame || frame.dataset.activated === '1') return;
+      var html = '';
+      if (srcEl) html = srcEl.textContent || '';
+      // Hỗ trợ bài cũ lưu bằng srcdoc
+      if (!html && frame.getAttribute('srcdoc')) html = frame.getAttribute('srcdoc') || '';
+      if (!html) return;
+      try {
+        var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        var url = URL.createObjectURL(blob);
+        frame.onload = function () {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+        };
+        frame.removeAttribute('srcdoc');
+        frame.src = url;
+        frame.dataset.activated = '1';
+      } catch (err) {
+        frame.setAttribute('srcdoc', html);
+        frame.dataset.activated = '1';
+      }
+    });
+  }
+
+
+  function preloadContentImages(root) {
+    var scope = root || document;
+    var imgs = (scope.querySelectorAll ? scope.querySelectorAll('img[src]') : []);
+    Array.prototype.forEach.call(imgs, function (img) {
+      var src = img.getAttribute('src');
+      if (!src) return;
+      img.setAttribute('loading', 'eager');
+      img.setAttribute('decoding', 'async');
+      // force decode
+      try {
+        if (img.decode) img.decode().catch(function () {});
+      } catch (e) {}
+      img.onerror = img.onerror || function () {
+        if (img.parentNode && img.parentNode.classList) img.parentNode.classList.add('no-img');
+        img.style.display = 'none';
+      };
+    });
+    // Banner/hero background-image: gán lại để kích hoạt tải
+    var bgs = scope.querySelectorAll ? scope.querySelectorAll('.hero-bg[style], .article-hero') : [];
+    Array.prototype.forEach.call(bgs, function (n) {
+      if (n.style && n.style.backgroundImage) {
+        var bg = n.style.backgroundImage;
+        n.style.backgroundImage = 'none';
+        // reflow
+        void n.offsetWidth;
+        n.style.backgroundImage = bg;
+      }
+    });
   }
 
   function postCard(p) {
     var thumb = p.thumbnailUrl
-      ? '<div class="post-thumb"><img src="' + esc(p.thumbnailUrl) + '" alt="" loading="lazy" onerror="this.parentNode.classList.add(\'no-img\')"></div>'
+      ? '<div class="post-thumb"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="eager" decoding="async" onerror="this.parentNode.classList.add(\'no-img\')"></div>'
       : '<div class="post-thumb no-img"></div>';
     return '<article class="post" data-post="' + esc(p.postId) + '">' + thumb +
       '<div class="post-body"><span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
@@ -703,7 +745,7 @@
     var galleryHtml = gallery.length
       ? '<section class="sec"><div class="sec-h"><h2>Hình ảnh nhà trường</h2></div>' +
         '<div class="gallery">' + gallery.map(function (src) {
-          return '<div class="gallery-item hover-zoom"><img src="' + esc(fixDriveUrl(src)) + '" alt="" loading="lazy"></div>';
+          return '<div class="gallery-item hover-zoom"><img src="' + esc(fixDriveUrl(src)) + '" alt="" loading="eager" decoding="async" onerror="this.parentNode.classList.add(\'no-img\')"></div>';
         }).join('') + '</div></section>'
       : '';
 
@@ -786,6 +828,7 @@
     homeSections.forEach(function (section) { parts.push(section.html); });
 
     setHtml('#publicMain', parts.join(''));
+    preloadContentImages(el('publicMain'));
     bindPostClicks('#publicMain');
     $$('#publicMain .notice-list [data-post]').forEach(function (li) {
       li.style.cursor = 'pointer';
@@ -807,9 +850,12 @@
         '<span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
         '<h1>' + esc(p.title) + '</h1>' +
         '<p class="dim">' + esc(p.summary || '') + (dt ? ' · ' + esc(dt) : '') + '</p>' +
-        (p.thumbnailUrl ? '<div class="article-hero"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="lazy"></div>' : '') +
+        (p.thumbnailUrl ? '<div class="article-hero"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="eager" decoding="async" onerror="this.parentNode.classList.add(\'no-img\')"></div>' : '') +
         '<div class="article-body">' + html + '</div>' +
         '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Về trang chủ</button></p></article>');
+      activateHtmlEmbeds(el('publicMain') || document);
+      // Ép trình duyệt tải sớm ảnh trong bài
+      preloadContentImages(el('publicMain'));
       var b = el('backPub');
       if (b) b.onclick = renderPublicHome;
     }
@@ -1050,15 +1096,20 @@
         while ((mm = rePdf.exec(tmp))) {
           extraPdfs.push({ url: mm[1], title: 'Tài liệu PDF' });
         }
-        // HTML nhúng (iframe srcdoc hoặc bản cũ media-embed)
-        var reWrap = /<div class="media-embed-wrap"[^>]*data-name=["']([^"']*)["'][^>]*>[\s\S]*?srcdoc=["']([^"']*)["'][\s\S]*?<\/div>/gi;
-        while ((mm = reWrap.exec(tmp))) {
-          var decoded = mm[2]
-            .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-          extraHtmlFiles.push({ name: mm[1] || 'file.html', html: decoded });
+        // HTML nhúng (script type=text/plain hoặc srcdoc cũ)
+        var reSrc = /<div class="media-embed-wrap"[^>]*data-name=["']([^"']*)["'][^>]*>[\s\S]*?<script type="text\/plain"[^>]*class="embed-html-src"[^>]*>([\s\S]*?)<\/script>/gi;
+        while ((mm = reSrc.exec(tmp))) {
+          extraHtmlFiles.push({ name: mm[1] || 'file.html', html: mm[2].replace(/<\\\/script/gi, '</script') });
         }
-        // Bản cũ (inject trực tiếp) — vẫn đọc được để không mất dữ liệu
+        if (!extraHtmlFiles.length) {
+          var reWrap = /<div class="media-embed-wrap"[^>]*data-name=["']([^"']*)["'][^>]*>[\s\S]*?srcdoc=["']([^"']*)["'][\s\S]*?<\/div>/gi;
+          while ((mm = reWrap.exec(tmp))) {
+            var decoded = mm[2]
+              .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+            extraHtmlFiles.push({ name: mm[1] || 'file.html', html: decoded });
+          }
+        }
         if (!extraHtmlFiles.length) {
           var reEmbed = /<div class="media-embed"[^>]*(?:data-name=["']([^"']*)["'])?[^>]*>([\s\S]*?)<\/div>/gi;
           while ((mm = reEmbed.exec(tmp))) {
