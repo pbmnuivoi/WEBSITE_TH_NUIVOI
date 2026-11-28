@@ -544,27 +544,49 @@
   function buildHtmlEmbed(name, html) {
     var label = name || 'file.html';
     var inner = String(html || '');
-    // Đã là trang đầy đủ → giữ nguyên (kèm CSS trong <head>)
-    // Chỉ bọc thêm khi chỉ là mảnh HTML
-    if (!/<\s*html[\s>]/i.test(inner)) {
+    // Ảnh lỗi → hiện icon mặc định (trong iframe)
+    var fallbackScript =
+      '<script>(function(){function fb(img){if(!img||img.dataset.fb)return;img.dataset.fb="1";' +
+      'img.style.visibility="hidden";var s=document.createElement("span");s.textContent="\\uD83D\\uDDBC\\uFE0F";' +
+      's.setAttribute("aria-hidden","true");s.style.cssText="display:inline-flex;align-items:center;justify-content:center;' +
+      'min-width:48px;min-height:48px;font-size:32px;background:#ffffff22;border-radius:12px;";' +
+      'if(img.parentNode)img.parentNode.insertBefore(s,img);}document.addEventListener("error",function(e){' +
+      'if(e.target&&e.target.tagName==="IMG")fb(e.target);},true);})();<\/script>';
+    var imgCss = 'img{max-width:100%;height:auto}img[data-fb]{display:none}';
+
+    // Đã là trang đầy đủ → giữ nguyên CSS/JS; chỉ chèn fallback ảnh + meta nếu thiếu
+    if (/<\s*html[\s>]/i.test(inner)) {
+      if (!/<\/head>/i.test(inner)) {
+        inner = inner.replace(/<\s*html[^>]*>/i, '$&<head><meta charset="utf-8"></head>');
+      }
+      inner = inner.replace(/<\/head>/i, '<style>' + imgCss + '</style></head>');
+      if (/<\/body>/i.test(inner)) {
+        inner = inner.replace(/<\/body>/i, fallbackScript + '</body>');
+      } else {
+        inner += fallbackScript;
+      }
+    } else {
       var styles = '';
-      // Nếu người dùng lưu kèm style blocks ở đầu chuỗi
       var styleChunks = inner.match(/<style[\s\S]*?<\/style>/gi);
       if (styleChunks && styleChunks.length) {
         styles = styleChunks.join('\n');
         inner = inner.replace(/<style[\s\S]*?<\/style>/gi, '');
       }
+      // Giữ script của mảnh HTML
       inner = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
         '<meta name="viewport" content="width=device-width,initial-scale=1">' +
         '<base target="_blank">' +
-        '<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;line-height:1.5;word-wrap:break-word;}img,table,video,iframe{max-width:100%;height:auto;}</style>\n' +
+        '<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;line-height:1.5;word-wrap:break-word;}' +
+        imgCss + 'table,video,iframe{max-width:100%;height:auto;}</style>\n' +
         styles +
-        '</head><body>' + inner + '</body></html>';
+        '</head><body>' + inner + fallbackScript + '</body></html>';
     }
+    // allow-scripts: để game/HTML tương tác (mở quà, nút…) chạy được trong iframe
     return '<div class="media-embed-wrap" data-name="' + esc(label) + '">' +
       '<div class="media-embed-head"><span>🌐 ' + esc(label) + '</span></div>' +
       '<iframe class="media-embed-frame" title="' + esc(label) + '" ' +
-      'sandbox="allow-same-origin allow-popups" loading="lazy" srcdoc="' + escapeSrcdoc(inner) + '"></iframe></div>';
+      'sandbox="allow-scripts allow-same-origin allow-popups allow-forms" ' +
+      'loading="lazy" srcdoc="' + escapeSrcdoc(inner) + '"></iframe></div>';
   }
 
   function postCard(p) {
@@ -842,14 +864,24 @@
   var LIST_CACHE_MS = 15000;
 
   function showWorkLoading(title) {
-    // Làm mờ vùng nội dung chờ dữ liệu — không dùng icon/spinner
+    // Làm mờ + biểu tượng loading chờ form/dữ liệu sidebar
     if (title) setText('#crumb', title);
     var main = el('workMain');
-    if (main) main.classList.add('is-dim-loading');
+    if (!main) return;
+    main.classList.add('is-dim-loading');
+    if (!main.querySelector('.work-load-overlay')) {
+      var ov = document.createElement('div');
+      ov.className = 'work-load-overlay';
+      ov.innerHTML = '<div class="work-load-box"><span class="work-load-spin" aria-hidden="true"></span><span>Đang tải…</span></div>';
+      main.appendChild(ov);
+    }
   }
   function clearWorkLoading() {
     var main = el('workMain');
-    if (main) main.classList.remove('is-dim-loading');
+    if (!main) return;
+    main.classList.remove('is-dim-loading');
+    var ov = main.querySelector('.work-load-overlay');
+    if (ov) ov.remove();
   }
 
   function navSide(id) {
