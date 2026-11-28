@@ -796,3 +796,14 @@ button.is-loading::after {
   overflow: auto;
   max-width: 100%;
 }
+
+/* Làm mờ vùng nội dung khi chờ dữ liệu sidebar (không dùng spinner) */
+#workMain.is-dim-loading {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(0.15);
+  transition: opacity 0.2s ease;
+}
+#workMain {
+  transition: opacity 0.2s ease;
+}
