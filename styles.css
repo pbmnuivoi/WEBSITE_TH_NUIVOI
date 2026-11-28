@@ -807,3 +807,77 @@ button.is-loading::after {
 #workMain {
   transition: opacity 0.2s ease;
 }
+
+/* Overlay loading khi chờ dữ liệu sidebar */
+#workMain {
+  position: relative;
+  transition: opacity 0.2s ease;
+}
+#workMain.is-dim-loading > *:not(.work-load-overlay) {
+  opacity: 0.4;
+  filter: grayscale(0.12);
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#workMain.is-dim-loading {
+  opacity: 1;
+  pointer-events: none;
+  filter: none;
+}
+.work-load-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.35);
+  pointer-events: none;
+}
+.work-load-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+}
+.work-load-spin {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid #cbd5e1;
+  border-top-color: var(--primary, #2457a7);
+  border-radius: 50%;
+  animation: work-spin 0.7s linear infinite;
+}
+@keyframes work-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* iframe HTML game / trang nhúng cao hơn */
+.media-embed-frame {
+  min-height: 640px;
+  height: 720px;
+}
+
+/* Ảnh lỗi trên trang chính */
+.post-thumb.no-img,
+.post-thumb.no-img::before {
+  content: none;
+}
+.post-thumb.no-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #eef2f7, #e2e8f0);
+  color: #94a3b8;
+  font-size: 36px;
+}
+.post-thumb.no-img::after {
+  content: "🖼️";
+}
