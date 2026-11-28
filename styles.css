@@ -758,3 +758,41 @@ button.is-loading::after {
   max-width: 100%;
 }
 .media-embed img, .media-embed table { max-width: 100%; }
+
+/* HTML nhúng — iframe cách ly, không phá layout trang */
+.media-embed-wrap {
+  margin: 20px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+.media-embed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #eef2f7;
+  font-size: 13px;
+  font-weight: 600;
+}
+.media-embed-frame {
+  display: block;
+  width: 100%;
+  min-height: 360px;
+  height: 480px;
+  border: 0;
+  background: #fff;
+}
+/* Ẩn style cũ inject trực tiếp nếu còn bài cũ */
+.article-body > .media-embed {
+  all: unset;
+  display: block;
+  margin: 20px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px;
+  overflow: auto;
+  max-width: 100%;
+}
