@@ -450,7 +450,7 @@
     return '';
   }
 
-  /** Giống bản gốc: lh3.googleusercontent — hiển thị ổn trên trang public */
+  /** Chỉ đổi URL Google Drive → lh3 (như bản gốc). Link ảnh ngoài giữ nguyên. */
   function fixDriveUrl(u) {
     u = String(u || '').trim();
     if (!u) return u;
@@ -459,9 +459,20 @@
     return 'https://lh3.googleusercontent.com/d/' + id + '=w1600';
   }
 
+  /** URL dùng hiển thị public: Drive thì fix, còn lại dùng đúng link đã lưu */
+  function publicImgSrc(u) {
+    u = String(u || '').trim();
+    if (!u) return '';
+    if (/drive\.google|googleusercontent|docs\.google|thumbnail\?id=/i.test(u) || extractDriveId(u)) {
+      return fixDriveUrl(u);
+    }
+    return u;
+  }
+
   function imgTag(src, extraClass) {
-    var url = fixDriveUrl(src);
+    var url = publicImgSrc(src);
     var cls = extraClass ? (' class="' + extraClass + '"') : '';
+    // Không dùng crossorigin — tránh lỗi CORS khiến ảnh biến mất khi chưa login Google
     return '<img' + cls + ' src="' + esc(url) + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.parentNode&&this.parentNode.classList.add(\'no-img\');this.style.display=\'none\'">';
   }
 
@@ -650,7 +661,7 @@
   }
 
   function postCard(p) {
-    var src = p.thumbnailUrl ? fixDriveUrl(p.thumbnailUrl) : '';
+    var src = p.thumbnailUrl ? publicImgSrc(p.thumbnailUrl) : '';
     var thumb = src
       ? '<div class="post-thumb"><img src="' + esc(src) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add(\'no-img\')"></div>'
       : '<div class="post-thumb no-img"></div>';
@@ -686,17 +697,44 @@
     setText('#fContact', [cfg.phone && ('ĐT: ' + cfg.phone), cfg.email].filter(Boolean).join(' · ') || '—');
     applyLogo();
 
-    // Logo click = trang chủ; nav chỉ menu HOME từ dữ liệu
-    var items = homeMenus().map(function (m) {
-      return { id: m.menuId, title: m.title, icon: m.icon };
-    });
-    var html = items.map(function (it) {
-      return '<button type="button" data-home="' + esc(it.id) + '"><span>' + icon(it.icon) + '</span> ' + esc(it.title) + '</button>';
-    }).join('');
+    // Logo click = trang chủ; nav hỗ trợ menu cấp 2–3
+    var all = homeMenus();
+    function kids(pid) {
+      return all.filter(function (m) { return String(m.parentId || '') === String(pid || ''); });
+    }
+    function navItem(m) {
+      var sub = kids(m.menuId);
+      if (!sub.length) {
+        return '<button type="button" class="nav-item" data-home="' + esc(m.menuId) + '"><span>' + icon(m.icon) + '</span> ' + esc(m.title) + '</button>';
+      }
+      return '<div class="nav-drop">' +
+        '<button type="button" class="nav-item nav-drop-btn" data-home="' + esc(m.menuId) + '"><span>' + icon(m.icon) + '</span> ' + esc(m.title) + ' <span class="caret">▾</span></button>' +
+        '<div class="nav-drop-menu">' + sub.map(function (c) {
+          var sub2 = kids(c.menuId);
+          if (!sub2.length) {
+            return '<button type="button" class="nav-sub" data-home="' + esc(c.menuId) + '">' + esc(c.title) + '</button>';
+          }
+          return '<div class="nav-drop nested">' +
+            '<button type="button" class="nav-sub nav-drop-btn" data-home="' + esc(c.menuId) + '">' + esc(c.title) + ' ▸</button>' +
+            '<div class="nav-drop-menu">' + sub2.map(function (g) {
+              return '<button type="button" class="nav-sub" data-home="' + esc(g.menuId) + '">' + esc(g.title) + '</button>';
+            }).join('') + '</div></div>';
+        }).join('') + '</div></div>';
+    }
+    var roots = kids('');
+    var html = roots.map(navItem).join('');
     setHtml('#homeNav', html || '');
     setHtml('#homeMnav', html || '');
     $$('#homeNav [data-home], #homeMnav [data-home]').forEach(function (b) {
-      b.onclick = function () {
+      b.onclick = function (e) {
+        // Nếu có menu con và bấm vào nút cha trên mobile: toggle
+        var drop = b.closest('.nav-drop');
+        if (drop && b.classList.contains('nav-drop-btn') && window.matchMedia('(max-width: 800px)').matches) {
+          var open = drop.classList.contains('open');
+          $$('#homeNav .nav-drop, #homeMnav .nav-drop').forEach(function (d) { d.classList.remove('open'); });
+          if (!open) drop.classList.add('open');
+          // vẫn điều hướng theo menu cha
+        }
         hide('#homeMnav');
         navHome(b.getAttribute('data-home'));
       };
@@ -764,7 +802,7 @@
     var galleryHtml = gallery.length
       ? '<section class="sec"><div class="sec-h"><h2>Hình ảnh nhà trường</h2></div>' +
         '<div class="gallery">' + gallery.map(function (src) {
-          return '<div class="gallery-item hover-zoom"><img src="' + esc(fixDriveUrl(src)) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add(\'no-img\')"></div>';
+          return '<div class="gallery-item hover-zoom"><img src="' + esc(publicImgSrc(src)) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add(\'no-img\')"></div>';
         }).join('') + '</div></section>'
       : '';
 
@@ -784,7 +822,7 @@
     var parts = [];
     parts.push(
       '<section class="hero">' +
-      (cfg.bannerUrl ? '<div class="hero-bg" style="background-image:url(' + esc(fixDriveUrl(cfg.bannerUrl)) + ')"></div>' : '') +
+      (cfg.bannerUrl ? '<div class="hero-bg" style="background-image:url(' + esc(publicImgSrc(cfg.bannerUrl)) + ')"></div>' : '') +
       '<div class="hero-content">' +
       '<div class="badge">Cổng thông tin công khai</div>' +
       '<h1>' + esc(cfg.welcomeTitle || cfg.schoolName || 'Cổng thông tin trường học') + '</h1>' +
@@ -861,7 +899,7 @@
       var html = p.contentHtml || '';
       // Chuẩn hóa URL Drive trong bài (giống logic bản gốc + referrerpolicy)
       html = html.replace(/src=(["'])(https?:[^"']+)\1/gi, function (_, q, u) {
-        return 'src=' + q + fixDriveUrl(u) + q;
+        return 'src=' + q + publicImgSrc(u) + q;
       });
       html = html.replace(/<img\b/gi, '<img referrerpolicy="no-referrer" ');
       var dt = (p.publishedAt || p.createdAt || '').toString().slice(0, 10);
@@ -870,7 +908,7 @@
         '<span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
         '<h1>' + esc(p.title) + '</h1>' +
         '<p class="dim">' + esc(p.summary || '') + (dt ? ' · ' + esc(dt) : '') + '</p>' +
-        (p.thumbnailUrl ? '<div class="article-hero"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add(\'no-img\')"></div>' : '') +
+        (p.thumbnailUrl ? '<div class="article-hero"><img src="' + esc(publicImgSrc(p.thumbnailUrl)) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add(\'no-img\')"></div>' : '') +
         '<div class="article-body">' + html + '</div>' +
         '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Về trang chủ</button></p></article>');
       activateHtmlEmbeds(el('publicMain') || document);
@@ -1421,7 +1459,7 @@
 
       if (!fd.publishedAt) fd.publishedAt = today;
       if (/^\d{4}-\d{2}-\d{2}$/.test(fd.publishedAt)) fd.publishedAt = fd.publishedAt + 'T00:00:00.000Z';
-      if (fd.thumbnailUrl) fd.thumbnailUrl = fixDriveUrl(fd.thumbnailUrl);
+      if (fd.thumbnailUrl) fd.thumbnailUrl = publicImgSrc(fd.thumbnailUrl);
       if (!fd.postId) delete fd.postId;
       delete fd.bodyText; delete fd.videoUrl;
 
@@ -1523,47 +1561,247 @@
       var list = (all || []).filter(function (m) {
         return String(m.location || '').toUpperCase() === 'HOME' &&
           m.menuId !== 'M_HOME' && String(m.title || '').toLowerCase() !== 'trang chủ';
+      }).map(function (m) {
+        return {
+          menuId: m.menuId,
+          parentId: String(m.parentId || ''),
+          title: m.title || '',
+          icon: m.icon || 'link',
+          url: m.url || '',
+          sortOrder: Number(m.sortOrder || 0),
+          status: m.status || 'ON',
+          location: 'HOME',
+          menuType: m.menuType || 'GROUP',
+          openMode: m.openMode || 'SAME'
+        };
       });
-      var rows = list.map(function (m) {
-        return '<tr><td><b>' + esc(m.title) + '</b><div class="dim" style="font-size:11px">' + esc(m.icon) + '</div></td>' +
-          '<td class="actions"><button type="button" class="btn-sm" data-edit="' + esc(m.menuId) + '">Sửa</button> ' +
-          '<button type="button" class="btn-sm btn-danger" data-del="' + esc(m.menuId) + '">Xóa</button></td></tr>';
-      }).join('');
+
+      function childrenOf(pid) {
+        return list.filter(function (m) { return String(m.parentId || '') === String(pid || ''); })
+          .sort(function (a, b) { return a.sortOrder - b.sortOrder; });
+      }
+      function depthOf(m, guard) {
+        guard = guard || 0;
+        if (guard > 5) return 0;
+        if (!m.parentId) return 0;
+        var p = list.find(function (x) { return x.menuId === m.parentId; });
+        return p ? 1 + depthOf(p, guard + 1) : 0;
+      }
+      function isAncestor(maybeParentId, nodeId) {
+        var cur = list.find(function (x) { return x.menuId === maybeParentId; });
+        var g = 0;
+        while (cur && g < 8) {
+          if (cur.menuId === nodeId) return true;
+          cur = list.find(function (x) { return x.menuId === cur.parentId; });
+          g++;
+        }
+        return false;
+      }
+
+      function renderTree() {
+        function rowHtml(m, depth) {
+          var kids = childrenOf(m.menuId);
+          var pad = 12 + depth * 22;
+          return '<div class="menu-tree-item" draggable="true" data-id="' + esc(m.menuId) + '" style="padding-left:' + pad + 'px">' +
+            '<span class="menu-drag-handle" title="Kéo để sắp xếp / đưa vào menu cha">⋮⋮</span>' +
+            '<span class="menu-tree-ico">' + icon(m.icon) + '</span>' +
+            '<span class="menu-tree-title"><b>' + esc(m.title) + '</b>' +
+            (depth ? ' <span class="dim">cấp ' + (depth + 1) + '</span>' : '') +
+            (m.url ? ' <span class="dim">· link</span>' : '') +
+            (m.status === 'OFF' ? ' <span class="dim">(tắt)</span>' : '') +
+            '</span>' +
+            '<span class="menu-tree-actions">' +
+            '<button type="button" class="btn-sm" data-edit="' + esc(m.menuId) + '">Sửa</button> ' +
+            '<button type="button" class="btn-sm btn-danger" data-del="' + esc(m.menuId) + '">Xóa</button>' +
+            '</span></div>' +
+            kids.map(function (c) { return rowHtml(c, depth + 1); }).join('');
+        }
+        var roots = childrenOf('');
+        var html = roots.length
+          ? roots.map(function (m) { return rowHtml(m, 0); }).join('')
+          : '<p class="dim">Chưa có menu. Bấm «+ Thêm».</p>';
+        // Vùng gốc để thả về cấp 1
+        html = '<div class="menu-tree-root-zone" data-parent="">⬇ Thả vào đây để đưa về <b>cấp 1</b></div>' + html;
+        var box = el('menuTree');
+        if (box) {
+          box.innerHTML = html;
+          renderIcons(box);
+          bindTreeDnD();
+          bindTreeActions();
+        }
+      }
+
+      var dragId = null;
+      function bindTreeDnD() {
+        $$('#menuTree .menu-tree-item').forEach(function (node) {
+          node.addEventListener('dragstart', function (e) {
+            dragId = node.getAttribute('data-id');
+            node.classList.add('dragging');
+            try { e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; } catch (err) {}
+          });
+          node.addEventListener('dragend', function () {
+            node.classList.remove('dragging');
+            $$('#menuTree .menu-tree-item, #menuTree .menu-tree-root-zone').forEach(function (x) {
+              x.classList.remove('drag-over');
+            });
+            dragId = null;
+          });
+          node.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            node.classList.add('drag-over');
+          });
+          node.addEventListener('dragleave', function () { node.classList.remove('drag-over'); });
+          node.addEventListener('drop', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            node.classList.remove('drag-over');
+            var targetId = node.getAttribute('data-id');
+            var srcId = dragId || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+            if (!srcId || srcId === targetId) return;
+            var src = list.find(function (x) { return x.menuId === srcId; });
+            var target = list.find(function (x) { return x.menuId === targetId; });
+            if (!src || !target) return;
+            // Không cho kéo vào chính con cháu của nó
+            if (isAncestor(targetId, srcId)) {
+              toast('Không thể đưa menu cha vào trong menu con.');
+              return;
+            }
+            // Độ sâu tối đa cấp 3 (depth 0,1,2)
+            var newDepth = depthOf(target) + 1;
+            if (newDepth > 2) {
+              toast('Chỉ hỗ trợ tối đa menu cấp 3.');
+              return;
+            }
+            // Thả vào một mục = trở thành con của mục đó, sort cuối danh sách con
+            src.parentId = target.menuId;
+            var sibs = childrenOf(target.menuId).filter(function (x) { return x.menuId !== srcId; });
+            src.sortOrder = sibs.length ? (Math.max.apply(null, sibs.map(function (s) { return s.sortOrder; })) + 10) : 10;
+            renderTree();
+          });
+        });
+        var rootZone = $('#menuTree .menu-tree-root-zone');
+        if (rootZone) {
+          rootZone.addEventListener('dragover', function (e) { e.preventDefault(); rootZone.classList.add('drag-over'); });
+          rootZone.addEventListener('dragleave', function () { rootZone.classList.remove('drag-over'); });
+          rootZone.addEventListener('drop', function (e) {
+            e.preventDefault();
+            rootZone.classList.remove('drag-over');
+            var srcId = dragId || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+            var src = list.find(function (x) { return x.menuId === srcId; });
+            if (!src) return;
+            src.parentId = '';
+            var roots = childrenOf('').filter(function (x) { return x.menuId !== srcId; });
+            src.sortOrder = roots.length ? (Math.max.apply(null, roots.map(function (s) { return s.sortOrder; })) + 10) : 10;
+            renderTree();
+          });
+        }
+      }
+
+      function bindTreeActions() {
+        $$('#menuTree [data-edit]').forEach(function (b) {
+          b.onclick = function (e) {
+            e.stopPropagation();
+            showMenuForm(list.find(function (x) { return x.menuId === b.getAttribute('data-edit'); }), list);
+          };
+        });
+        $$('#menuTree [data-del]').forEach(function (b) {
+          b.onclick = function (e) {
+            e.stopPropagation();
+            if (!confirm('Xóa menu này? (Menu con sẽ về cấp 1)')) return;
+            var id = b.getAttribute('data-del');
+            // Con về gốc tạm trên client; server chỉ xóa 1 dòng
+            list.forEach(function (m) {
+              if (m.parentId === id) m.parentId = '';
+            });
+            api('deleteMenu', { menuId: id })
+              .then(function () {
+                listCache.menus = null; listCache.menusAt = 0;
+                toast('Đã xóa');
+                renderMenusCrud();
+              })
+              .catch(function (err) { toast(err.message); });
+          };
+        });
+      }
+
       setHtml('#workMain',
         '<div class="panel"><div class="toolbar"><h3 style="margin:0">Menu công khai</h3>' +
-        '<button type="button" class="btn btn-primary" id="btnNewMenu">+ Thêm</button></div>' +
-        '<p class="dim">Tên menu = danh mục bài viết. Không cần mục “Trang chủ” (logo đã về trang chủ).</p>' +
-        '<div class="table-wrap"><table class="table"><thead><tr><th>Menu</th><th></th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="2">Chưa có</td></tr>') + '</tbody></table></div>' +
+        '<span class="btn-group">' +
+        '<button type="button" class="btn btn-outline" id="btnSaveMenuTree">Lưu thứ tự / cấp</button> ' +
+        '<button type="button" class="btn btn-primary" id="btnNewMenu">+ Thêm</button></span></div>' +
+        '<p class="dim">Kéo ⋮⋮ để <b>đưa menu vào trong menu khác</b> (cấp 2–3) hoặc thả vào vùng «cấp 1». Bấm <b>Lưu thứ tự / cấp</b> để ghi nhận.</p>' +
+        '<div id="menuTree" class="menu-tree"></div>' +
         '<div id="menuFormBox" class="hidden" style="margin-top:14px"></div></div>');
-      el('btnNewMenu').onclick = function () { showMenuForm(null); };
-      $$('#workMain [data-edit]').forEach(function (b) {
-        b.onclick = function () {
-          showMenuForm(list.find(function (x) { return x.menuId === b.getAttribute('data-edit'); }));
-        };
-      });
-      $$('#workMain [data-del]').forEach(function (b) {
-        b.onclick = function () {
-          if (!confirm('Xóa menu?')) return;
-          api('deleteMenu', { menuId: b.getAttribute('data-del') })
-            .then(function () { toast('Đã xóa'); renderMenusCrud(); })
-            .catch(function (e) { toast(e.message); });
-        };
-      });
+
+      renderTree();
+
+      el('btnNewMenu').onclick = function () { showMenuForm(null, list); };
+      el('btnSaveMenuTree').onclick = function () {
+        var btn = el('btnSaveMenuTree');
+        if (btn) { btn.disabled = true; btn.textContent = 'Đang lưu…'; }
+        // Gán lại sortOrder theo thứ tự DFS hiện tại
+        var order = 10;
+        function walk(pid) {
+          childrenOf(pid).forEach(function (m) {
+            m.sortOrder = order;
+            order += 10;
+            walk(m.menuId);
+          });
+        }
+        walk('');
+        var chain = Promise.resolve();
+        list.forEach(function (m) {
+          chain = chain.then(function () {
+            return api('saveMenu', {
+              menuId: m.menuId,
+              parentId: m.parentId || '',
+              title: m.title,
+              icon: m.icon,
+              url: m.url || '',
+              sortOrder: m.sortOrder,
+              status: m.status,
+              location: 'HOME',
+              menuType: m.url ? 'LINK' : 'GROUP',
+              openMode: 'SAME'
+            });
+          });
+        });
+        chain.then(function () {
+          listCache.menus = null; listCache.menusAt = 0;
+          return api('bootstrap');
+        }).then(function (boot) {
+          apply(boot, true);
+          toast('Đã lưu cấu trúc menu.');
+          renderMenusCrud();
+        }).catch(function (err) {
+          toast(err.message || 'Lỗi lưu menu');
+        }).finally(function () {
+          if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = 'Lưu thứ tự / cấp'; }
+        });
+      };
     }).catch(function (e) {
       setHtml('#workMain', '<div class="panel"><p class="err">' + esc(e.message) + '</p></div>');
     });
   }
 
-  function showMenuForm(m) {
+  function showMenuForm(m, allMenus) {
     m = m || {};
+    allMenus = allMenus || [];
     var box = el('menuFormBox');
     if (!box) return;
     box.classList.remove('hidden');
+    var parentOpts = '<option value="">— Không (cấp 1) —</option>' +
+      allMenus.filter(function (x) {
+        return x.menuId && x.menuId !== m.menuId;
+      }).map(function (x) {
+        var sel = String(m.parentId || '') === String(x.menuId) ? ' selected' : '';
+        return '<option value="' + esc(x.menuId) + '"' + sel + '>' + esc(x.title) + '</option>';
+      }).join('');
     box.innerHTML = '<form class="form" id="menuForm">' +
       '<input type="hidden" name="menuId" value="' + esc(m.menuId || '') + '">' +
       '<input type="hidden" name="location" value="HOME">' +
       field('Tiêu đề (= danh mục bài viết)', 'title', m.title) +
+      '<label>Menu cha (cấp trên)<select name="parentId">' + parentOpts + '</select></label>' +
       '<div class="span2 icon-picker"><label for="menuIconSearch">Chọn biểu tượng</label>' +
       '<input id="menuIconSearch" type="search" placeholder="Tìm icon: trường học, sách, thông báo..." autocomplete="off">' +
       '<input type="hidden" name="icon" id="menuIconValue" value="' + esc(m.icon || 'newspaper') + '">' +
@@ -1600,9 +1838,11 @@
       d.location = 'HOME';
       d.menuType = d.url ? 'LINK' : 'GROUP';
       d.openMode = 'SAME';
+      d.parentId = d.parentId || '';
       if (!d.menuId) delete d.menuId;
       api('saveMenu', d).then(function () {
         toast('Đã lưu');
+        listCache.menus = null; listCache.menusAt = 0;
         return api('bootstrap');
       }).then(function (boot) { apply(boot, true); renderMenusCrud(); })
         .catch(function (err) { toast(err.message); });
