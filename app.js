@@ -11,7 +11,14 @@
   function $(s, r) { return (r || document).querySelector(s); }
   function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
   function el(id) { return document.getElementById(id); }
-  function setHtml(sel, html) { var n = $(sel); if (n) { n.innerHTML = html; renderIcons(n); } }
+  function setHtml(sel, html) {
+    var n = $(sel);
+    if (!n) return;
+    // Khi nội dung mới sẵn sàng → bỏ làm mờ chờ load
+    if (sel === '#workMain' || n.id === 'workMain') n.classList.remove('is-dim-loading');
+    n.innerHTML = html;
+    renderIcons(n);
+  }
   function renderIcons(root) { if (window.lucide && typeof window.lucide.createIcons === 'function') window.lucide.createIcons({ root: root || document, attrs: { 'stroke-width': 1.8 } }); }
   function setText(sel, text) { var n = $(sel); if (n) n.textContent = text; }
   function show(sel) { var n = $(sel); if (n) n.classList.remove('hidden'); }
@@ -66,9 +73,8 @@
   document.addEventListener('click', function (event) {
     var button = event.target && event.target.closest ? event.target.closest('button') : null;
     if (!button || button.disabled) return;
-    // Điều hướng menu công khai chỉ đổi nội dung đã có ở client: không hiển thị
-    // spinner/disabled như một thao tác gửi dữ liệu lên máy chủ.
-    if (button.matches('[data-home]')) return;
+    // Điều hướng menu (public / sidebar / dashboard): không gắn spinner loading
+    if (button.matches('[data-home], [data-side], [data-go]')) return;
     // Nút submit được quản lý duy nhất ở sự kiện submit của form.
     if (button.type === 'submit' || (button.form && (!button.type || button.type === 'submit'))) return;
     setActionContext(button);
@@ -533,22 +539,32 @@
 
   /**
    * Nhúng file HTML trong iframe sandbox — không ảnh hưởng CSS/JS/layout trang chủ.
-   * sandbox không cho script/form để tránh phá trang.
+   * Giữ nguyên <style> / CSS trong file; sandbox không chạy script.
    */
   function buildHtmlEmbed(name, html) {
     var label = name || 'file.html';
     var inner = String(html || '');
-    // Bọc tối thiểu để hiển thị ổn trong iframe
-    if (!/<\s*html[\s>]/i.test(inner) && !/<\s*body[\s>]/i.test(inner)) {
+    // Đã là trang đầy đủ → giữ nguyên (kèm CSS trong <head>)
+    // Chỉ bọc thêm khi chỉ là mảnh HTML
+    if (!/<\s*html[\s>]/i.test(inner)) {
+      var styles = '';
+      // Nếu người dùng lưu kèm style blocks ở đầu chuỗi
+      var styleChunks = inner.match(/<style[\s\S]*?<\/style>/gi);
+      if (styleChunks && styleChunks.length) {
+        styles = styleChunks.join('\n');
+        inner = inner.replace(/<style[\s\S]*?<\/style>/gi, '');
+      }
       inner = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
         '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-        '<style>body{margin:12px;font-family:system-ui,sans-serif;line-height:1.5;word-wrap:break-word;}img,table,video{max-width:100%;height:auto;}</style>' +
+        '<base target="_blank">' +
+        '<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;line-height:1.5;word-wrap:break-word;}img,table,video,iframe{max-width:100%;height:auto;}</style>\n' +
+        styles +
         '</head><body>' + inner + '</body></html>';
     }
     return '<div class="media-embed-wrap" data-name="' + esc(label) + '">' +
       '<div class="media-embed-head"><span>🌐 ' + esc(label) + '</span></div>' +
       '<iframe class="media-embed-frame" title="' + esc(label) + '" ' +
-      'sandbox="allow-same-origin" loading="lazy" srcdoc="' + escapeSrcdoc(inner) + '"></iframe></div>';
+      'sandbox="allow-same-origin allow-popups" loading="lazy" srcdoc="' + escapeSrcdoc(inner) + '"></iframe></div>';
   }
 
   function postCard(p) {
@@ -826,8 +842,14 @@
   var LIST_CACHE_MS = 15000;
 
   function showWorkLoading(title) {
-    // Chỉ đổi tiêu đề breadcrumb — không hiện skeleton / icon loading
+    // Làm mờ vùng nội dung chờ dữ liệu — không dùng icon/spinner
     if (title) setText('#crumb', title);
+    var main = el('workMain');
+    if (main) main.classList.add('is-dim-loading');
+  }
+  function clearWorkLoading() {
+    var main = el('workMain');
+    if (main) main.classList.remove('is-dim-loading');
   }
 
   function navSide(id) {
@@ -1250,11 +1272,10 @@
             var reader = new FileReader();
             reader.onerror = function () { reject(new Error('Không đọc được ' + f.name)); };
             reader.onload = function () {
+              // Giữ nguyên toàn bộ file (kèm <style>, <link> tuyệt đối, body…)
+              // để CSS trong file HTML vẫn được áp dụng trong iframe
               var text = String(reader.result || '');
-              // Lấy phần body nếu là trang HTML đầy đủ
-              var bodyMatch = text.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-              var content = bodyMatch ? bodyMatch[1] : text;
-              htmlItems.push({ name: f.name || 'file.html', html: content });
+              htmlItems.push({ name: f.name || 'file.html', html: text });
               renderHtmlList();
               resolve();
             };
