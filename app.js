@@ -23,6 +23,20 @@
   function setText(sel, text) { var n = $(sel); if (n) n.textContent = text; }
   function show(sel) { var n = $(sel); if (n) n.classList.remove('hidden'); }
   function hide(sel) { var n = $(sel); if (n) n.classList.add('hidden'); }
+  // Fallback URL ảnh Drive khi nguồn đầu thất bại (xem công khai không cần đăng nhập)
+  window.__imgFb = function (img) {
+    if (!img) return;
+    var raw = img.getAttribute('data-fb') || '';
+    var list = raw ? raw.split('|').filter(Boolean) : [];
+    var i = Number(img.dataset.fbIndex || 0);
+    if (i < list.length) {
+      img.dataset.fbIndex = String(i + 1);
+      img.src = list[i];
+      return;
+    }
+    if (img.parentNode && img.parentNode.classList) img.parentNode.classList.add('no-img');
+    img.style.display = 'none';
+  };
   function on(id, ev, fn) { var n = el(id); if (n) n.addEventListener(ev, fn); }
 
   // Khóa nút theo từng thao tác; tránh đếm trùng click + submit + fetch.
@@ -434,22 +448,53 @@
   }
 
 
-  function fixDriveUrl(u) {
+  function extractDriveId(u) {
     u = String(u || '').trim();
-    if (!u) return u;
-    var id = '';
+    if (!u) return '';
     var m1 = u.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
     var m2 = u.match(/\/d\/([a-zA-Z0-9_-]{10,})/);
     var m3 = u.match(/\/file\/d\/([a-zA-Z0-9_-]{10,})/);
     var m4 = u.match(/thumbnail\?id=([a-zA-Z0-9_-]{10,})/);
-    if (m1) id = m1[1];
-    else if (m2) id = m2[1];
-    else if (m3) id = m3[1];
-    else if (m4) id = m4[1];
-    else if (/^[a-zA-Z0-9_-]{25,}$/.test(u)) id = u;
+    var m5 = u.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{10,})/);
+    if (m1) return m1[1];
+    if (m2) return m2[1];
+    if (m3) return m3[1];
+    if (m4) return m4[1];
+    if (m5) return m5[1];
+    if (/^[a-zA-Z0-9_-]{25,}$/.test(u)) return u;
+    return '';
+  }
+
+  /**
+   * URL ảnh Drive xem được công khai (không cần đăng nhập Google/portal).
+   * Dùng thumbnail endpoint — ổn định hơn uc/lh3 khi chưa có phiên Google.
+   */
+  function fixDriveUrl(u) {
+    u = String(u || '').trim();
+    if (!u) return u;
+    var id = extractDriveId(u);
     if (!id) return u;
-    // googleusercontent ổn định hơn cho <img>
-    return 'https://lh3.googleusercontent.com/d/' + id + '=w1600';
+    return 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600';
+  }
+
+  /** Các URL dự phòng nếu thumbnail lỗi */
+  function driveFallbackUrls(u) {
+    var id = extractDriveId(u);
+    if (!id) return [];
+    return [
+      'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600',
+      'https://lh3.googleusercontent.com/d/' + id + '=w1600',
+      'https://drive.google.com/uc?export=view&id=' + id
+    ];
+  }
+
+  function imgTag(src, cls) {
+    var url = fixDriveUrl(src);
+    var fb = driveFallbackUrls(src).filter(function (x) { return x !== url; });
+    var fbAttr = fb.length ? ' data-fb="' + esc(fb.join('|')) + '"' : '';
+    return '<img class="' + (cls || '') + '" src="' + esc(url) + '" alt="" loading="eager" decoding="async" ' +
+      'referrerpolicy="no-referrer" crossorigin="anonymous"' + fbAttr +
+      ' onerror="window.__imgFb&&window.__imgFb(this)">';
   }
 
   function youtubeId(url) {
@@ -633,7 +678,7 @@
 
   function postCard(p) {
     var thumb = p.thumbnailUrl
-      ? '<div class="post-thumb"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="eager" decoding="async" onerror="this.parentNode.classList.add(\'no-img\')"></div>'
+      ? '<div class="post-thumb">' + imgTag(p.thumbnailUrl) + '</div>'
       : '<div class="post-thumb no-img"></div>';
     return '<article class="post" data-post="' + esc(p.postId) + '">' + thumb +
       '<div class="post-body"><span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
@@ -745,7 +790,7 @@
     var galleryHtml = gallery.length
       ? '<section class="sec"><div class="sec-h"><h2>Hình ảnh nhà trường</h2></div>' +
         '<div class="gallery">' + gallery.map(function (src) {
-          return '<div class="gallery-item hover-zoom"><img src="' + esc(fixDriveUrl(src)) + '" alt="" loading="eager" decoding="async" onerror="this.parentNode.classList.add(\'no-img\')"></div>';
+          return '<div class="gallery-item hover-zoom">' + imgTag(src) + '</div>';
         }).join('') + '</div></section>'
       : '';
 
@@ -840,9 +885,13 @@
     function view(p) {
       if (!p) return toast('Không tìm thấy bài viết');
       var html = p.contentHtml || '';
-      // Giữ nguyên contentHtml (ảnh/PDF/embed đã nằm cuối hoặc inline). Chỉ fix Drive URL cho img.
-      html = html.replace(/src=(["'])(https?:[^"']+)\1/gi, function (_, q, u) {
-        return 'src=' + q + fixDriveUrl(u) + q;
+      // Chuẩn hóa mọi ảnh trong bài → URL Drive công khai + fallback
+      html = html.replace(/<img\b([^>]*?)src=(["'])(https?:[^"']+)\2([^>]*)>/gi, function (_, pre, q, u, post) {
+        var url = fixDriveUrl(u);
+        var fb = driveFallbackUrls(u).filter(function (x) { return x !== url; });
+        var fbAttr = fb.length ? ' data-fb="' + esc(fb.join('|')) + '"' : '';
+        return '<img' + pre + 'src="' + esc(url) + '" referrerpolicy="no-referrer" crossorigin="anonymous"' +
+          fbAttr + ' onerror="window.__imgFb&&window.__imgFb(this)"' + post + '>';
       });
       var dt = (p.publishedAt || p.createdAt || '').toString().slice(0, 10);
       setHtml('#publicMain',
@@ -850,19 +899,19 @@
         '<span class="tag">' + esc(p.category || 'Thông báo') + '</span>' +
         '<h1>' + esc(p.title) + '</h1>' +
         '<p class="dim">' + esc(p.summary || '') + (dt ? ' · ' + esc(dt) : '') + '</p>' +
-        (p.thumbnailUrl ? '<div class="article-hero"><img src="' + esc(fixDriveUrl(p.thumbnailUrl)) + '" alt="" loading="eager" decoding="async" onerror="this.parentNode.classList.add(\'no-img\')"></div>' : '') +
+        (p.thumbnailUrl ? '<div class="article-hero">' + imgTag(p.thumbnailUrl) + '</div>' : '') +
         '<div class="article-body">' + html + '</div>' +
         '<p style="margin-top:18px"><button type="button" class="btn btn-outline" id="backPub">← Về trang chủ</button></p></article>');
       activateHtmlEmbeds(el('publicMain') || document);
-      // Ép trình duyệt tải sớm ảnh trong bài
       preloadContentImages(el('publicMain'));
       var b = el('backPub');
       if (b) b.onclick = renderPublicHome;
     }
     var p = state.posts.find(function (x) { return x.postId === id; });
     if (p) return view(p);
-    if (!state.token) return toast('Không tìm thấy bài viết');
-    api('getPost', { postId: id }).then(view).catch(function (e) { toast(e.message); });
+    // Công khai: lấy bài PUBLISHED không cần đăng nhập
+    var action = state.token ? 'getPost' : 'publicGetPost';
+    api(action, { postId: id }).then(view).catch(function (e) { toast(e.message || 'Không tìm thấy bài viết'); });
   }
 
   /* ===== WORKSPACE ===== */
