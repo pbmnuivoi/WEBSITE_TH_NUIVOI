@@ -521,6 +521,36 @@
       '<iframe src="' + esc(src) + '" title="' + esc(label) + '" loading="lazy" allowfullscreen></iframe></div>';
   }
 
+  /** Escape HTML để đưa vào thuộc tính srcdoc (cách ly hoàn toàn khỏi trang) */
+  function escapeSrcdoc(html) {
+    return String(html || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Nhúng file HTML trong iframe sandbox — không ảnh hưởng CSS/JS/layout trang chủ.
+   * sandbox không cho script/form để tránh phá trang.
+   */
+  function buildHtmlEmbed(name, html) {
+    var label = name || 'file.html';
+    var inner = String(html || '');
+    // Bọc tối thiểu để hiển thị ổn trong iframe
+    if (!/<\s*html[\s>]/i.test(inner) && !/<\s*body[\s>]/i.test(inner)) {
+      inner = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+        '<style>body{margin:12px;font-family:system-ui,sans-serif;line-height:1.5;word-wrap:break-word;}img,table,video{max-width:100%;height:auto;}</style>' +
+        '</head><body>' + inner + '</body></html>';
+    }
+    return '<div class="media-embed-wrap" data-name="' + esc(label) + '">' +
+      '<div class="media-embed-head"><span>🌐 ' + esc(label) + '</span></div>' +
+      '<iframe class="media-embed-frame" title="' + esc(label) + '" ' +
+      'sandbox="allow-same-origin" loading="lazy" srcdoc="' + escapeSrcdoc(inner) + '"></iframe></div>';
+  }
+
   function postCard(p) {
     var thumb = p.thumbnailUrl
       ? '<div class="post-thumb"><img src="' + esc(p.thumbnailUrl) + '" alt="" loading="lazy" onerror="this.parentNode.classList.add(\'no-img\')"></div>'
@@ -796,14 +826,8 @@
   var LIST_CACHE_MS = 15000;
 
   function showWorkLoading(title) {
-    setText('#crumb', title || 'Đang tải');
-    setHtml('#workMain',
-      '<div class="panel work-loading">' +
-      '<div class="skel skel-title"></div>' +
-      '<div class="skel skel-line"></div>' +
-      '<div class="skel skel-line short"></div>' +
-      '<div class="skel skel-block"></div>' +
-      '<p class="dim" style="margin-top:12px">Đang tải dữ liệu…</p></div>');
+    // Chỉ đổi tiêu đề breadcrumb — không hiện skeleton / icon loading
+    if (title) setText('#crumb', title);
   }
 
   function navSide(id) {
@@ -972,15 +996,26 @@
         while ((mm = rePdf.exec(tmp))) {
           extraPdfs.push({ url: mm[1], title: 'Tài liệu PDF' });
         }
-        // HTML nhúng (từ file)
-        var reEmbed = /<div class="media-embed"[^>]*(?:data-name=["']([^"']*)["'])?[^>]*>([\s\S]*?)<\/div>/gi;
-        while ((mm = reEmbed.exec(tmp))) {
-          extraHtmlFiles.push({ name: mm[1] || 'file.html', html: mm[2] });
+        // HTML nhúng (iframe srcdoc hoặc bản cũ media-embed)
+        var reWrap = /<div class="media-embed-wrap"[^>]*data-name=["']([^"']*)["'][^>]*>[\s\S]*?srcdoc=["']([^"']*)["'][\s\S]*?<\/div>/gi;
+        while ((mm = reWrap.exec(tmp))) {
+          var decoded = mm[2]
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+          extraHtmlFiles.push({ name: mm[1] || 'file.html', html: decoded });
+        }
+        // Bản cũ (inject trực tiếp) — vẫn đọc được để không mất dữ liệu
+        if (!extraHtmlFiles.length) {
+          var reEmbed = /<div class="media-embed"[^>]*(?:data-name=["']([^"']*)["'])?[^>]*>([\s\S]*?)<\/div>/gi;
+          while ((mm = reEmbed.exec(tmp))) {
+            extraHtmlFiles.push({ name: mm[1] || 'file.html', html: mm[2] });
+          }
         }
         // Body text: bỏ media blocks
         var clean = tmp
           .replace(/<p class="media-img">[\s\S]*?<\/p>/gi, '')
           .replace(/<div class="media-pdf"[\s\S]*?<\/div>/gi, '')
+          .replace(/<div class="media-embed-wrap"[\s\S]*?<\/div>/gi, '')
           .replace(/<div class="media-embed"[\s\S]*?<\/div>/gi, '')
           .replace(/<div class="media-video">[\s\S]*?<\/div>/gi, '');
         bodySeed = stripHtml(clean);
@@ -1268,8 +1303,7 @@
         return buildPdfEmbed(it.url, it.title);
       }).join('');
       var embedHtml = htmlItems.map(function (it) {
-        var nameAttr = it.name ? ' data-name="' + esc(it.name) + '"' : '';
-        return '<div class="media-embed"' + nameAttr + '>' + (it.html || '') + '</div>';
+        return buildHtmlEmbed(it.name, it.html);
       }).join('');
 
       // Ảnh, PDF, HTML đặt CUỐI bài viết
